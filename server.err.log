@@ -1,0 +1,17 @@
+INFO:     Started server process [34720]
+INFO:     Waiting for application startup.
+2026-09-04 15:53:40,662 app.main INFO Poller started: PLC 192.168.5.3 (rack 0, slot 1) every 500ms
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+2026-09-04 15:53:40,812 snap7.client INFO S7Client initialized (pure Python implementation)
+2026-09-04 15:53:40,845 snap7.connection INFO Connected to 192.168.5.3:102, PDU size: 1024
+2026-09-04 15:53:40,888 snap7.client INFO Negotiated PDU length: 240
+2026-09-04 15:53:40,889 snap7.client INFO [192.168.5.3 R0/S1] Connected to 192.168.5.3:102 rack 0 slot 1
+2026-09-04 15:53:40,889 snap7.client INFO Auto-tuned max_parallel=2 (PDU=240)
+2026-09-04 15:56:58,688 app.plc INFO Recorded event: cycle_complete
+2026-09-04 15:57:07,732 app.plc INFO Recorded event: cycle_complete
+2026-09-04 15:57:13,133 app.plc INFO Recorded event: metal_detected
+2026-09-04 15:57:35,122 app.plc INFO Recorded event: cycle_complete
+2026-09-04 15:57:50,420 app.plc INFO Recorded event: cycle_complete
+2026-09-04 15:57:58,420 app.plc INFO Recorded event: cycle_complete
+2026-09-04 17:22:26,144 app.plc INFO Recorded event: cycle_complete

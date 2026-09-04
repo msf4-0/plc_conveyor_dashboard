@@ -1,0 +1,15 @@
+Label,PLC Address,Description
+ESO,I1.1,Emergency Stop
+S1,I0.1,Stop push button
+S2,I0.2,Start push button (G)
+S3,I0.3,Reset push button (Y)
+B1,I0.7,Finish sensor
+B2,I0.6,Middle sensor
+B3,I0.5,Start sensor
+B4,I1.0,Inductive sensor
+K1,Q0.3,Relay for Motor
+K2,Q0.4,Relay for direction
+K3,Q0.5,Relay for speed
+P1,Q1.0,Red Tower Light
+P2,Q0.7,Yellow Tower Light
+P3,Q0.6,Green Tower Light

@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PLC Conveyor Line Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #10151c;
+    --panel: #1a222d;
+    --panel-edge: #2c3947;
+    --text: #e8edf2;
+    --muted: #8fa1b3;
+    --on: #35d07f;
+    --off: #3a4653;
+    --red: #e74c3c;
+    --yellow: #f1c40f;
+    --green: #2ecc71;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: "Segoe UI", Arial, sans-serif;
+  }
+  #stale-banner {
+    display: none;
+    background: #c0392b; color: #fff; font-weight: 700;
+    text-align: center; padding: 12px; font-size: 1.2rem;
+    position: sticky; top: 0; z-index: 10;
+  }
+  #stale-banner.visible { display: block; }
+  main { max-width: 1200px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 1.5rem; margin: 8px 0 16px; }
+  h2 { font-size: 1.05rem; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin: 0 0 12px; }
+  .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+  .panel { background: var(--panel); border: 1px solid var(--panel-edge); border-radius: 10px; padding: 16px; }
+  .row { display: flex; align-items: center; gap: 12px; margin: 10px 0; }
+  .label { flex: 1; font-size: 1.05rem; }
+  .label.red { color: var(--red); }
+  .label.yellow { color: var(--yellow); }
+  .label.green { color: var(--green); }
+
+  /* Tower lights: circular LEDs, glow when on, dim when off */
+  .led {
+    width: 32px; height: 32px; border-radius: 50%;
+    background: #1d2530; border: 2px solid var(--panel-edge);
+    flex-shrink: 0;
+  }
+  .led.red.on {
+    background: var(--red); border-color: #f1948a;
+    box-shadow: 0 0 18px 5px rgba(231, 76, 60, .75);
+  }
+  .led.yellow.on {
+    background: var(--yellow); border-color: #f7dc6f;
+    box-shadow: 0 0 18px 5px rgba(241, 196, 15, .75);
+  }
+  .led.green.on {
+    background: var(--green); border-color: #7dcea0;
+    box-shadow: 0 0 18px 5px rgba(46, 204, 113, .75);
+  }
+
+  .pill {
+    min-width: 110px; text-align: center; padding: 8px 14px; border-radius: 999px;
+    background: var(--off); color: var(--muted); font-weight: 700; letter-spacing: .04em;
+    border: 2px solid transparent;
+  }
+  /* Neutral lit state (conveyor, proximity sensors) */
+  .pill.on {
+    color: var(--on); border-color: var(--on);
+    text-shadow: 0 0 10px rgba(53, 208, 127, .7);
+  }
+  /* Coloured lit state: text lights up, background stays dark */
+  .pill.on.red {
+    color: #ff6f61; border-color: var(--red);
+    text-shadow: 0 0 10px rgba(231, 76, 60, .9);
+  }
+  .pill.on.yellow {
+    color: #ffe14d; border-color: var(--yellow);
+    text-shadow: 0 0 10px rgba(241, 196, 15, .9);
+  }
+  .pill.on.green {
+    color: #58e79b; border-color: var(--green);
+    text-shadow: 0 0 10px rgba(46, 204, 113, .9);
+  }
+  .charts { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); margin-top: 16px; }
+  .chart-box { position: relative; height: 260px; }
+  footer { color: var(--muted); font-size: .85rem; margin: 24px 0 8px; line-height: 1.5; }
+  #last-update { color: var(--muted); font-size: .8rem; }
+</style>
+</head>
+<body>
+<div id="stale-banner">&#9888; STALE &mdash; PLC connection lost. Values frozen; updates resume automatically on reconnect.</div>
+<main>
+  <h1>Conveyor Line Dashboard <span id="last-update"></span></h1>
+
+  <div class="grid">
+    <section class="panel">
+      <h2>Tower Lights</h2>
+      <div class="row"><span class="label">Red</span><span id="light-red" class="led red" title="Red tower light (P1)"></span></div>
+      <div class="row"><span class="label">Yellow</span><span id="light-yellow" class="led yellow" title="Yellow tower light (P2)"></span></div>
+      <div class="row"><span class="label">Green</span><span id="light-green" class="led green" title="Green tower light (P3)"></span></div>
+    </section>
+
+    <section class="panel">
+      <h2>Control Panel Buttons</h2>
+      <div class="row"><span class="label red">Emergency Stop</span><span id="btn-e_stop" class="pill red">RELEASED</span></div>
+      <div class="row"><span class="label red">Stop</span><span id="btn-stop" class="pill red">RELEASED</span></div>
+      <div class="row"><span class="label green">Start</span><span id="btn-start" class="pill green">RELEASED</span></div>
+      <div class="row"><span class="label yellow">Reset</span><span id="btn-reset" class="pill yellow">RELEASED</span></div>
+    </section>
+
+    <section class="panel">
+      <h2>Conveyor Belt</h2>
+      <div class="row"><span class="label">Motion</span><span id="conveyor" class="pill">STOPPED</span></div>
+    </section>
+
+    <section class="panel">
+      <h2>Sensors</h2>
+      <div class="row"><span class="label">Proximity #1 &mdash; Start (B3)</span><span id="sensor-b3" class="pill">CLEAR</span></div>
+      <div class="row"><span class="label">Proximity #2 &mdash; Middle (B2)</span><span id="sensor-b2" class="pill">CLEAR</span></div>
+      <div class="row"><span class="label">Proximity #3 &mdash; Finish (B1)</span><span id="sensor-b1" class="pill">CLEAR</span></div>
+      <div class="row"><span class="label">Metal Detector (B4)</span><span id="sensor-metal_detector" class="pill red">CLEAR</span></div>
+    </section>
+  </div>
+
+  <div class="charts">
+    <section class="panel">
+      <h2>Completed Cycles per Minute (last 10 min)</h2>
+      <div class="chart-box"><canvas id="cycle-chart"></canvas></div>
+    </section>
+    <section class="panel">
+      <h2>Metal Detections per Minute (last 10 min)</h2>
+      <div class="chart-box"><canvas id="metal-chart"></canvas></div>
+    </section>
+  </div>
+
+  <footer>
+    <strong>Limitations:</strong> Momentary button presses shorter than the polling
+    interval (~500&nbsp;ms) may not appear on this dashboard. The panel Reset button
+    is a PLC control only &mdash; it does not reset the cycle or metal-detection
+    counters shown here.
+  </footer>
+</main>
+
+<script>
+const STATE_URL = "/api/state";
+const STATS_URL = "/api/stats";
+
+function setLed(id, on) {
+  document.getElementById(id).classList.toggle("on", on);
+}
+
+function setPill(id, on, onText, offText) {
+  const el = document.getElementById(id);
+  const text = on ? onText : offText;
+  if (el.textContent !== text) el.textContent = text;
+  el.classList.toggle("on", on);
+}
+
+function renderState(state) {
+  const banner = document.getElementById("stale-banner");
+  banner.classList.toggle("visible", state.stale);
+
+  if (!state.values) return; // nothing received yet: keep blanks
+
+  const v = state.values;
+  setLed("light-red", v.lights.red);
+  setLed("light-yellow", v.lights.yellow);
+  setLed("light-green", v.lights.green);
+
+  for (const [key, btn] of Object.entries(v.buttons)) {
+    setPill("btn-" + key, btn.pressed, "PRESSED", "RELEASED");
+  }
+
+  setPill("conveyor", v.conveyor.running, "RUNNING", "STOPPED");
+
+  for (const [key, sensor] of Object.entries(v.sensors)) {
+    setPill("sensor-" + key, sensor.detecting, "DETECTING", "CLEAR");
+  }
+
+  document.getElementById("last-update").textContent =
+    state.stale ? "(frozen at " + state.last_update + ")" : "";
+}
+
+async function pollState() {
+  try {
+    const res = await fetch(STATE_URL, { cache: "no-store" });
+    if (!res.ok) throw new Error("state fetch " + res.status);
+    renderState(await res.json());
+  } catch (err) {
+    // backend unreachable: freeze everything and show the banner
+    document.getElementById("stale-banner").classList.add("visible");
+  }
+}
+setInterval(pollState, 500);
+pollState();
+
+const commonOptions = {
+  responsive: true,
+  maintainAspectRatio: false,
+  animation: false,
+  scales: {
+    x: { ticks: { color: "#8fa1b3" }, grid: { color: "#2c3947" } },
+    y: { beginAtZero: true, ticks: { color: "#8fa1b3", precision: 0 }, grid: { color: "#2c3947" } }
+  },
+  plugins: { legend: { display: false } }
+};
+
+const cycleChart = new Chart(document.getElementById("cycle-chart"), {
+  type: "bar",
+  data: { labels: [], datasets: [{ label: "Cycles", data: [], backgroundColor: "#2ecc71" }] },
+  options: commonOptions
+});
+const metalChart = new Chart(document.getElementById("metal-chart"), {
+  type: "bar",
+  data: { labels: [], datasets: [{ label: "Detections", data: [], backgroundColor: "#e67e22" }] },
+  options: commonOptions
+});
+
+async function pollStats() {
+  try {
+    const res = await fetch(STATS_URL, { cache: "no-store" });
+    if (!res.ok) return;
+    const stats = await res.json();
+    const labels = stats.points.map(p => p.minute);
+    const cycles = stats.points.map(p => p.cycles);
+    const metal = stats.points.map(p => p.metal);
+    if (cycleChart.data.labels.join() !== labels.join()) {
+      cycleChart.data.labels = labels;
+      metalChart.data.labels = labels;
+    }
+    cycleChart.data.datasets[0].data = cycles;
+    metalChart.data.datasets[0].data = metal;
+    cycleChart.update();
+    metalChart.update();
+  } catch (err) {
+    /* stats are advisory; state banner covers connectivity problems */
+  }
+}
+setInterval(pollStats, 2000);
+pollStats();
+</script>
+</body>
+</html>
