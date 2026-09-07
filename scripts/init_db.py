@@ -26,10 +26,10 @@ def create_database(dsn: str) -> None:
 
 
 def main() -> None:
-    dsn = load_config().database_url
-    create_database(dsn)
-    ensure_schema(dsn)
-    print("Schema ensured: table line_events (+ index)")
+    cfg = load_config()
+    create_database(cfg.database_url)
+    ensure_schema(cfg.database_url, default_line_ip=cfg.plc_ip)
+    print(f"Schema ensured: table line_events (+ index, line_ip default '{cfg.plc_ip}')")
 
 
 if __name__ == "__main__":

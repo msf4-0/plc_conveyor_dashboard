@@ -50,6 +50,27 @@ def test_window_includes_zero_minutes(dsn):
     assert all(set(p) == {"minute", "cycles", "metal"} for p in counts)
 
 
+def test_per_minute_counts_filtered_by_line(dsn):
+    ids = []
+    try:
+        ids.append(insert_event(dsn, "cycle_complete", line_ip="10.1.1.1"))
+        ids.append(insert_event(dsn, "cycle_complete", line_ip="10.2.2.2"))
+        ids.append(insert_event(dsn, "metal_detected", line_ip="10.2.2.2"))
+
+        mine = per_minute_counts(dsn, window_minutes=10, line_ip="10.1.1.1")
+        assert len(mine) == 10
+        assert mine[-1]["cycles"] == 1
+        assert mine[-1]["metal"] == 0
+        # minutes with no events for the line still appear with zero counts
+        assert all(set(p) == {"minute", "cycles", "metal"} for p in mine)
+
+        other = per_minute_counts(dsn, window_minutes=10, line_ip="10.2.2.2")
+        assert other[-1]["cycles"] == 1
+        assert other[-1]["metal"] == 1
+    finally:
+        _cleanup(dsn, ids)
+
+
 def test_timestamped_events_persist(dsn):
     ids = []
     try:

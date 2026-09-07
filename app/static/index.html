@@ -30,6 +30,24 @@
     position: sticky; top: 0; z-index: 10;
   }
   #stale-banner.visible { display: block; }
+  #stale-banner.connecting { background: #b9770e; }
+  #topbar { display: flex; align-items: center; gap: 12px; margin: 8px 0 0; }
+  .seg { display: inline-flex; border: 1px solid var(--panel-edge); border-radius: 8px; overflow: hidden; }
+  .seg button {
+    background: var(--panel); color: var(--muted); border: none; cursor: pointer;
+    font-size: .75rem; font-weight: 700; letter-spacing: .05em; padding: 6px 14px;
+  }
+  .seg button + button { border-left: 1px solid var(--panel-edge); }
+  .seg button.active { background: #243244; color: var(--on); }
+  .seg button:disabled { opacity: .5; cursor: default; }
+  #line-select {
+    display: none; background: var(--panel); color: var(--text);
+    border: 1px solid var(--panel-edge); border-radius: 6px; padding: 6px 10px;
+    font-size: .9rem;
+  }
+  #line-select.visible { display: inline-block; }
+  #line-label { display: none; color: var(--muted); font-size: .9rem; }
+  #line-label.visible { display: inline; }
   main { max-width: 1200px; margin: 0 auto; padding: 16px; }
   h1 { font-size: 1.5rem; margin: 8px 0 16px; }
   h2 { font-size: 1.05rem; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin: 0 0 12px; }
@@ -90,9 +108,18 @@
 </style>
 </head>
 <body>
-<div id="stale-banner">&#9888; STALE &mdash; PLC connection lost. Values frozen; updates resume automatically on reconnect.</div>
+<div id="stale-banner">&#9888; STALE &mdash; connection lost. Values frozen; updates resume automatically on reconnect.</div>
 <main>
-  <h1>Conveyor Line Dashboard <span id="last-update"></span></h1>
+  <div id="topbar">
+    <span class="seg" id="source-toggle">
+      <button id="src-direct" type="button" title="Read the dashboard's own PLC over Ethernet (S7)">DIRECT</button>
+      <button id="src-mqtt" type="button" title="Subscribe to a line's MQTT broker">MQTT</button>
+    </span>
+    <span id="line-label">Line:</span>
+    <select id="line-select"></select>
+    <span id="last-update"></span>
+  </div>
+  <h1>Conveyor Line Dashboard</h1>
 
   <div class="grid">
     <section class="panel">
@@ -139,7 +166,8 @@
     <strong>Limitations:</strong> Momentary button presses shorter than the polling
     interval (~500&nbsp;ms) may not appear on this dashboard. The panel Reset button
     is a PLC control only &mdash; it does not reset the cycle or metal-detection
-    counters shown here.
+    counters shown here. In MQTT mode, edge events that occur while the dashboard
+    is stale, disconnected, or pointed at another line are not counted.
   </footer>
 </main>
 
@@ -158,9 +186,90 @@ function setPill(id, on, onText, offText) {
   el.classList.toggle("on", on);
 }
 
+let selectedLine = null;   // currently selected line IP (mqtt mode)
+let sourceMode = "direct"; // "direct" | "mqtt"
+let switching = false;     // a /api/source request is in flight
+
+function renderLineControls(state) {
+  sourceMode = state.source || "direct";
+  document.getElementById("src-direct").classList.toggle("active", sourceMode !== "mqtt");
+  document.getElementById("src-mqtt").classList.toggle("active", sourceMode === "mqtt");
+
+  const lines = state.lines || {};
+  const select = document.getElementById("line-select");
+  const label = document.getElementById("line-label");
+  const mqttMode = sourceMode === "mqtt";
+  select.classList.toggle("visible", mqttMode);
+  label.classList.toggle("visible", mqttMode);
+  if (!mqttMode) return;
+
+  // (re)populate the dropdown when the line set changes
+  const keys = Object.keys(lines).join("|");
+  if (select.dataset.lines !== keys) {
+    select.dataset.lines = keys;
+    select.innerHTML = "";
+    for (const ip of Object.keys(lines)) {
+      const opt = document.createElement("option");
+      opt.value = ip;
+      opt.textContent = ip + "  (" + lines[ip] + ")";
+      select.appendChild(opt);
+    }
+  }
+  if (state.line_ip && selectedLine !== state.line_ip) {
+    selectedLine = state.line_ip;
+    select.value = selectedLine;
+  }
+}
+
+async function switchSource(name) {
+  if (switching || name === sourceMode) return;
+  switching = true;
+  const buttons = document.querySelectorAll("#source-toggle button");
+  const select = document.getElementById("line-select");
+  buttons.forEach(b => (b.disabled = true));
+  select.disabled = true;
+  try {
+    await fetch("/api/source", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source: name }),
+    });
+  } catch (err) { /* state polling reflects the failure */ }
+  selectedLine = null; // charts follow the newly active source's line
+  pollState();
+  buttons.forEach(b => (b.disabled = false));
+  select.disabled = false;
+  switching = false;
+}
+
+async function selectLine() {
+  const ip = document.getElementById("line-select").value;
+  if (!ip || ip === selectedLine) return;
+  selectedLine = ip;
+  try {
+    await fetch("/api/line", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ line_ip: ip }),
+    });
+  } catch (err) { /* state polling reflects the failure */ }
+  pollState();
+}
+
 function renderState(state) {
   const banner = document.getElementById("stale-banner");
-  banner.classList.toggle("visible", state.stale);
+  banner.classList.toggle("visible", state.stale || state.connecting);
+  banner.classList.toggle("connecting", !!state.connecting && !state.stale);
+  if (state.connecting && !state.stale) {
+    banner.textContent = "\u23F3 Connecting to line " + (state.line_ip || "") + " \u2026";
+  } else if (state.stale) {
+    banner.textContent = "\u26A0 STALE \u2014 connection lost. Values frozen; updates resume automatically on reconnect.";
+  }
+
+  renderLineControls(state);
+  document.getElementById("last-update").textContent = state.stale
+    ? (state.last_update ? "(frozen at " + state.last_update + ")" : "(no data yet)")
+    : "";
 
   if (!state.values) return; // nothing received yet: keep blanks
 
@@ -178,9 +287,6 @@ function renderState(state) {
   for (const [key, sensor] of Object.entries(v.sensors)) {
     setPill("sensor-" + key, sensor.detecting, "DETECTING", "CLEAR");
   }
-
-  document.getElementById("last-update").textContent =
-    state.stale ? "(frozen at " + state.last_update + ")" : "";
 }
 
 async function pollState() {
@@ -193,6 +299,9 @@ async function pollState() {
     document.getElementById("stale-banner").classList.add("visible");
   }
 }
+document.getElementById("line-select").addEventListener("change", selectLine);
+document.getElementById("src-direct").addEventListener("click", () => switchSource("direct"));
+document.getElementById("src-mqtt").addEventListener("click", () => switchSource("mqtt"));
 setInterval(pollState, 500);
 pollState();
 
@@ -220,7 +329,10 @@ const metalChart = new Chart(document.getElementById("metal-chart"), {
 
 async function pollStats() {
   try {
-    const res = await fetch(STATS_URL, { cache: "no-store" });
+    const url = selectedLine && sourceMode === "mqtt"
+      ? STATS_URL + "?line_ip=" + encodeURIComponent(selectedLine)
+      : STATS_URL;
+    const res = await fetch(url, { cache: "no-store" });
     if (!res.ok) return;
     const stats = await res.json();
     const labels = stats.points.map(p => p.minute);

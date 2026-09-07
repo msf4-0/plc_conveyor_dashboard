@@ -53,9 +53,10 @@ class PlcPoller:
     on reconnect the first snapshot only re-baselines edge detection.
     """
 
-    def __init__(self, reader, dsn: str, poll_interval_ms: int):
+    def __init__(self, reader, dsn: str, poll_interval_ms: int, line_ip: str = ""):
         self._reader = reader
         self._dsn = dsn
+        self._line_ip = line_ip
         self._poll_interval = poll_interval_ms / 1000.0
         self._lock = threading.Lock()
         self._stop = threading.Event()
@@ -81,10 +82,22 @@ class PlcPoller:
             return {
                 "connected": self._connected,
                 "stale": not self._connected,
+                "connecting": self._raw is None,
                 "server_time": datetime.now(timezone.utc).isoformat(),
                 "last_update": self._timestamp,
                 "values": build_view(self._raw) if self._raw is not None else None,
+                "line_ip": self._line_ip,
+                "source": "direct",
+                "lines": {},
             }
+
+    @property
+    def line_ip(self) -> str:
+        return self._line_ip
+
+    @property
+    def source(self) -> str:
+        return "direct"
 
     # -- loop ---------------------------------------------------------------
 
@@ -108,7 +121,7 @@ class PlcPoller:
         self._previous_raw = raw
         for event in events:
             try:
-                insert_event(self._dsn, event)
+                insert_event(self._dsn, event, line_ip=self._line_ip)
                 log.info("Recorded event: %s", event)
             except Exception:
                 log.exception("Failed to persist event %s", event)
