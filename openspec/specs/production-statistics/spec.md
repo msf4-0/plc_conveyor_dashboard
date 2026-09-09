@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Counts conveyor cycle completions and metal-detector detections from the process image, persists the counts to a local PostgreSQL server, and visualizes them as per-minute bar charts over a rolling 10-minute window.
+Counts conveyor cycle completions and metal-detector detections from the process image, keeps the per-minute counts in the dashboard process's memory (never persisted; reset on restart and connection change), and visualizes them as per-minute bar charts over a rolling 10-minute window.
 
 ## Requirements
 
@@ -28,17 +28,6 @@ The system SHALL count one metal detection each time the metal detector B4 (I1.0
 - **WHEN** B4 remains TRUE across multiple poll cycles for a single object
 - **THEN** only one metal detection is counted for that detection event
 
-### Requirement: Counter persistence in PostgreSQL
-The system SHALL persist cycle-completion and metal-detection events with timestamps to the PostgreSQL server at `localhost:5432` (user `postgres`, password `postgres`) in appropriately named tables, so counts survive dashboard restarts.
-
-#### Scenario: Event persisted
-- **WHEN** a cycle completion or metal detection is counted
-- **THEN** a timestamped event row is written to the corresponding PostgreSQL table
-
-#### Scenario: Counts survive restart
-- **WHEN** the dashboard is restarted after events have been recorded
-- **THEN** previously persisted counts remain available and are not reset by the dashboard
-
 ### Requirement: Dashboard independence from panel Reset
 The panel's Reset button (S3) is a PLC control only: it SHALL NOT reset or otherwise affect the dashboard's cycle or metal-detection counters.
 
@@ -47,30 +36,48 @@ The panel's Reset button (S3) is a PLC control only: it SHALL NOT reset or other
 - **THEN** the dashboard's counters are unchanged
 
 ### Requirement: Per-minute statistics charts
-The system SHALL display bar charts of counts per minute over a rolling 10-minute window for both the cycle-completion counter and the metal-detection counter, scoped to the currently selected line. When the selected line changes, the charts SHALL reflect the newly selected line's counts.
+The system SHALL display bar charts of counts per minute over a rolling 10-minute window for both the cycle-completion counter and the metal-detection counter, covering the currently active connection (the configured PLC in `direct` mode, the selected line in `mqtt` mode). When the active connection changes, the charts SHALL start from an empty window for the new connection.
 
 #### Scenario: Chart shows window
 - **WHEN** the dashboard is viewed
-- **THEN** each counter is shown as a bar chart of per-minute counts covering the last 10 minutes for the selected line
+- **THEN** each counter is shown as a bar chart of per-minute counts covering the last 10 minutes for the active connection
 
 #### Scenario: Window rolls forward
 - **WHEN** time advances past the current 10-minute window
 - **THEN** the charts drop the oldest minute and include the newest minute
 
 #### Scenario: Charts follow line selection
-- **WHEN** the user selects a different line
-- **THEN** the per-minute charts show that line's counts only
+- **WHEN** the user switches the active data source or, in `mqtt` mode, selects a different line
+- **THEN** the per-minute charts start from an empty window for the new connection and fill as new events are counted
 
-### Requirement: Line-scoped event persistence
-Every persisted cycle-completion and metal-detection event SHALL record the line it belongs to (`line_ip`, the PLC's IP address). Existing single-line behaviour is preserved: in `direct` mode events are tagged with the configured PLC's IP.
+### Requirement: In-process per-minute counting
+The dashboard SHALL own cycle-completion and metal-detection per-minute counting inside its own process, in memory: no cycle or metal-detection event or count SHALL be written to any database. Count history SHALL be process-local and SHALL NOT survive a dashboard restart: after a restart all per-minute counts start from zero.
 
-#### Scenario: MQTT event carries line identity
-- **WHEN** an edge event is counted while the dashboard is subscribed to a line over MQTT
-- **THEN** the persisted event row records that line's PLC IP
+#### Scenario: Counting without a database
+- **WHEN** the dashboard counts cycle completions and metal detections while no PostgreSQL server is reachable or configured
+- **THEN** the per-minute charts still show the counts collected since the dashboard started
 
-#### Scenario: Direct event carries configured identity
-- **WHEN** an edge event is counted in `direct` mode
-- **THEN** the persisted event row records the configured PLC's IP
+#### Scenario: Restart resets counts
+- **WHEN** the dashboard is restarted
+- **THEN** the per-minute counts start from zero and previously observed counts are not restored
+
+### Requirement: Count reset on connection change
+When the user switches the active data source (`direct` <-> `mqtt`) or, in `mqtt` mode, selects a different line, the dashboard SHALL reset the per-minute counters: the window for the newly connected PLC SHALL start empty, and counts observed for the previous connection SHALL NOT be shown for or attributed to the new one.
+
+#### Scenario: Source switch resets counts
+- **WHEN** the user switches from `mqtt` to `direct` (or vice versa) while counts are displayed
+- **THEN** the per-minute charts restart from an empty window for the newly connected PLC
+
+#### Scenario: Line switch resets counts
+- **WHEN** the user selects a different line in `mqtt` mode
+- **THEN** the per-minute counters are reset and the charts restart from an empty window for the newly selected line
+
+### Requirement: No configured database dependency
+The dashboard SHALL start and operate fully without a configured PostgreSQL DSN: no database environment variable SHALL be required for the dashboard's own configuration. The OEE panel's runtime, user-supplied `oee` database connection (see `oee-monitoring`) SHALL be unaffected by this requirement.
+
+#### Scenario: Dashboard starts without any database
+- **WHEN** the dashboard is started with no database-related environment variable set
+- **THEN** it serves the UI, PLC/MQTT state, per-minute statistics, and all OEE panel behaviour (given a runtime OEE connection) as usual
 
 ### Requirement: Edge re-baseline across data sources
 Regardless of data source, the first snapshot after the dashboard (re)connects, after a line switch, or after a stale period SHALL be used only to establish a baseline: no cycle or metal-detection counts SHALL be generated from it. Counts SHALL resume from the second snapshot onward.

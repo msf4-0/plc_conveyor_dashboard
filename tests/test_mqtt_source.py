@@ -1,9 +1,19 @@
+import json
 import time
 
 import pytest
 
-from app.mqtt_proto import encode_snapshot, state_topic, status_topic
-from app.mqtt_source import MqttLineSource
+from app.mqtt_proto import TAGS_TOPIC, encode_payload
+from app.mqtt_source import DEFAULT_STALENESS_MS, MqttLineSource
+from app.tags import TAGS
+
+LABELS = list(TAGS)
+
+
+def raw(**overrides):
+    values = {label: False for label in LABELS}
+    values.update(overrides)
+    return values
 
 
 class FakePahoClient:
@@ -11,7 +21,6 @@ class FakePahoClient:
 
     def __init__(self):
         self.subscriptions: list = []
-        self.unsubscriptions: list = []
         self.on_connect = None
         self.on_message = None
         self.on_disconnect = None
@@ -31,151 +40,114 @@ class FakePahoClient:
     def subscribe(self, topics, *args, **kwargs):
         self.subscriptions.append(topics)
 
-    def unsubscribe(self, topics, *args, **kwargs):
-        self.unsubscriptions.append(topics)
-
     # test helpers
     def fire_connect(self, ok=True):
         self.on_connect(self, None, {}, 0 if ok else 5, None)
 
-    def fire_state(self, line_ip, inputs, outputs):
+    def fire_tags(self, values: dict):
         self.on_message(self, None, type("M", (), {
-            "topic": state_topic(line_ip),
-            "payload": encode_snapshot(line_ip, inputs, outputs),
+            "topic": TAGS_TOPIC,
+            "payload": encode_payload(values),
         })())
 
-    def fire_status(self, line_ip, status: bytes):
+    def fire_raw(self, payload: bytes, topic: str = TAGS_TOPIC):
         self.on_message(self, None, type("M", (), {
-            "topic": status_topic(line_ip),
-            "payload": status,
+            "topic": topic,
+            "payload": payload,
         })())
 
 
-def set_bit(data: bytearray, byte: int, bit: int):
-    data[byte] |= 1 << bit
-
-
-def make_source(client, lines=None, staleness_ms=500):
+def make_source(client, staleness_ms=DEFAULT_STALENESS_MS, on_event=None):
     return MqttLineSource(
-        broker_host="127.0.0.1",
+        broker_host="192.168.0.11",
         broker_port=1883,
-        dsn="unused://dsn",  # persistence is patched per-test
         poll_interval_ms=500,
-        line_ip="10.0.0.1",
-        lines=lines,
         staleness_ms=staleness_ms,
+        on_event=on_event,
         client_factory=lambda: client,
     )
 
 
 @pytest.fixture()
-def source(monkeypatch):
+def source():
     client = FakePahoClient()
-    persisted = []
-    monkeypatch.setattr(
-        "app.mqtt_source.insert_event",
-        lambda dsn, event_type, line_ip="": persisted.append((line_ip, event_type)) or len(persisted),
-    )
-    src = make_source(client)
-    persisted_collector = persisted
+    recorded: list[str] = []
+    src = make_source(client, on_event=recorded.append)
     src.start()
     client.fire_connect()
-    return client, src, persisted_collector
+    return client, src, recorded
 
 
-def test_connect_subscribes_to_line_topics(source):
+def test_connect_subscribes_only_to_plc_tags(source):
     client, src, _ = source
-    topics = [t for t in client.subscriptions[0]]
-    assert (state_topic("10.0.0.1"), 0) in topics
-    assert (status_topic("10.0.0.1"), 0) in topics
+    assert client.subscriptions == [[(TAGS_TOPIC, 0)]]
+    assert src.broker == "192.168.0.11:1883"
 
 
 def test_first_snapshot_is_baseline_and_shows_values(source):
-    client, src, persisted = source
-    outputs = bytearray(2)
-    set_bit(outputs, 0, 6)  # P3 ON at first sight: must not count
-    client.fire_state("10.0.0.1", bytearray(2), outputs)
-    assert persisted == []  # baseline, no phantom event
+    client, src, recorded = source
+    client.fire_tags(raw(P3=True))  # P3 ON at first sight: must not count
+    assert recorded == []  # baseline, no phantom event
     snap = src.snapshot()
     assert snap["values"]["lights"]["green"] is True
     assert snap["stale"] is False and snap["connected"] is True
-    assert snap["source"] == "mqtt" and snap["line_ip"] == "10.0.0.1"
+    assert snap["source"] == "mqtt" and snap["broker"] == "192.168.0.11:1883"
+    assert "line_ip" not in snap and "lines" not in snap
 
 
 def test_edge_counted_after_baseline(source):
-    client, src, persisted = source
-    client.fire_state("10.0.0.1", bytearray(2), bytearray(2))  # baseline, P3 off
-    outputs = bytearray(2)
-    set_bit(outputs, 0, 6)
-    client.fire_state("10.0.0.1", bytearray(2), outputs)  # P3 rising -> cycle
-    assert ("10.0.0.1", "cycle_complete") in persisted
-    outputs2 = bytearray(outputs)
-    client.fire_state("10.0.0.1", bytearray(2), outputs2)  # stays ON: no duplicate
-    assert persisted.count(("10.0.0.1", "cycle_complete")) == 1
+    client, src, recorded = source
+    client.fire_tags(raw())  # baseline, P3 off
+    client.fire_tags(raw(P3=True))  # P3 rising -> cycle
+    assert "cycle_complete" in recorded
+    client.fire_tags(raw(P3=True))  # stays ON: no duplicate
+    assert recorded.count("cycle_complete") == 1
 
 
 def test_stale_after_silence_and_rebaseline_on_resume(source):
-    client, src, persisted = source
-    client.fire_state("10.0.0.1", bytearray(2), bytearray(2))
-    time.sleep(0.6)  # > staleness_ms (500)
+    client, src, recorded = source
+    client.fire_tags(raw(P3=True))  # baseline snapshot, P3 already ON
+    time.sleep(1.1)  # > DEFAULT_STALENESS_MS (1000)
     assert src.snapshot()["stale"] is True
-    # P3 already ON when data resumes: baseline, no phantom count
-    outputs = bytearray(2)
-    set_bit(outputs, 0, 6)
-    client.fire_state("10.0.0.1", bytearray(2), outputs)
+    # P3 already ON when data resumes: re-baseline, no phantom count
+    client.fire_tags(raw(P3=True))
     snap = src.snapshot()
     assert snap["stale"] is False
-    assert persisted == []
+    assert recorded == []
+    # counting resumes only on a later rising edge across the re-baseline
+    client.fire_tags(raw())  # P3 falling: no event
+    client.fire_tags(raw(P3=True))  # P3 rising: counted
+    assert recorded == ["cycle_complete"]
 
 
-def test_lwt_offline_marks_stale_values_frozen(source):
+def test_values_frozen_while_stale(source):
     client, src, _ = source
-    outputs = bytearray(2)
-    set_bit(outputs, 0, 6)
-    client.fire_state("10.0.0.1", bytearray(2), outputs)
-    before = src.snapshot()["last_update"]
-    client.fire_status("10.0.0.1", b"offline")
+    client.fire_tags(raw(P3=True))
+    frozen = src.snapshot()
+    time.sleep(1.1)
     snap = src.snapshot()
     assert snap["stale"] is True
     assert snap["values"]["lights"]["green"] is True  # frozen, not blanked
-    assert snap["last_update"] == before
-    client.fire_status("10.0.0.1", b"online")
-    assert src.snapshot()["stale"] is False
+    assert snap["last_update"] == frozen["last_update"]
 
 
-def test_set_line_clears_state_rebaselines_and_switches_topics(source):
-    client, src, persisted = source
-    lines = {"10.0.0.1": ("127.0.0.1", 1883), "10.0.0.2": ("127.0.0.1", 1883)}
-    src2_lines = lines
-    client2 = FakePahoClient()
-    # reuse same source with registry: rebuild through set_line path is validated
-    # via a source created with lines
-    client.fire_state("10.0.0.1", bytearray(2), bytearray(2))
-    src.set_line("10.0.0.1")  # switch to a line not in registry must raise only when registry set
-    # build registry-aware source to test validation + topic switch
-    src_lines = MqttLineSource(
-        broker_host="h", broker_port=1, dsn="u", poll_interval_ms=500,
-        line_ip="10.0.0.1", lines=src2_lines, client_factory=lambda: client,
-    )
-    with pytest.raises(ValueError):
-        src_lines.set_line("10.9.9.9")
-    src_lines.set_line("10.0.0.2")
-    assert src_lines.snapshot()["line_ip"] == "10.0.0.2"
-    assert src_lines.snapshot()["values"] is None  # cleared -> connecting
-    # messages from the old line are ignored
-    outputs = bytearray(2)
-    set_bit(outputs, 0, 6)
-    client.fire_state("10.0.0.1", bytearray(2), outputs)
-    assert src_lines.snapshot()["values"] is None
-    assert persisted == []
-    client.fire_state("10.0.0.2", bytearray(2), bytearray(2))  # baseline for new line
-    assert src_lines.snapshot()["values"]["lights"]["green"] is False
+def test_message_on_other_topic_ignored(source):
+    client, src, recorded = source
+    client.fire_raw(b'{"ESO": true}', topic="some/other/topic")
+    client.fire_tags(raw())
+    assert src.snapshot()["values"] is not None
+    assert recorded == []
 
 
-def test_malformed_snapshot_discarded(source):
-    client, src, persisted = source
-    client.on_message(client, None, type("M", (), {
-        "topic": state_topic("10.0.0.1"), "payload": b"{bad json",
-    })())
+def test_malformed_payload_discarded(source):
+    client, src, recorded = source
+    client.fire_raw(b"{bad json")
     assert src.snapshot()["values"] is None
-    assert persisted == []
+    assert recorded == []
+
+
+def test_strict_payload_with_missing_label_discarded(source):
+    client, src, recorded = source
+    client.fire_raw(json.dumps({k: False for k in LABELS if k != "B4"}))
+    assert src.snapshot()["values"] is None
+    assert recorded == []

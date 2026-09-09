@@ -86,11 +86,15 @@ The dashboard SHALL allow switching the active data source between `direct` and 
 - **THEN** the request is rejected with an error and the active source is unchanged
 
 ### Requirement: Stats follow the active source
-Per-minute statistics SHALL default to the active source's line: the configured PLC's IP in `direct` mode, the selected line's PLC IP in `mqtt` mode. When the active source or line changes, the charts SHALL reflect the newly active line's counts.
+Per-minute statistics SHALL default to the active source's connection: the configured PLC's IP in `direct` mode, the selected line's PLC IP in `mqtt` mode. Per-minute counts are kept in memory for the currently active connection only; when the active source or line changes, the counts SHALL reset and the charts SHALL start from an empty window for the newly connected line (no counts from the previous connection or from other lines are shown).
 
 #### Scenario: Charts follow a source switch
 - **WHEN** the user switches from the MQTT line `10.0.0.2` back to `direct` (the configured PLC)
-- **THEN** the per-minute charts show the configured PLC's counts only
+- **THEN** the per-minute charts start from an empty window for the configured PLC and fill only with newly counted events
+
+#### Scenario: Stats request for a non-active line
+- **WHEN** a stats request names a line other than the currently connected one
+- **THEN** the response reflects the active connection's counts (the request's line filter has no effect)
 
 ### Requirement: Line registry and selection
 In MQTT mode the dashboard SHALL hold a registry of known lines mapping each line's PLC IP address to its broker `host:port`, SHALL present these lines in a dropdown identified by PLC IP, and SHALL connect only to the selected line's broker. The dashboard SHALL also accept a directly configured broker address for MQTT mode even when the line is not in the registry.

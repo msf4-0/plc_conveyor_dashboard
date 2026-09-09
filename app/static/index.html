@@ -40,14 +40,24 @@
   .seg button + button { border-left: 1px solid var(--panel-edge); }
   .seg button.active { background: #243244; color: var(--on); }
   .seg button:disabled { opacity: .5; cursor: default; }
-  #line-select {
-    display: none; background: var(--panel); color: var(--text);
-    border: 1px solid var(--panel-edge); border-radius: 6px; padding: 6px 10px;
-    font-size: .9rem;
+  #mqtt-connect {
+    display: none; align-items: center; gap: 8px;
   }
-  #line-select.visible { display: inline-block; }
-  #line-label { display: none; color: var(--muted); font-size: .9rem; }
-  #line-label.visible { display: inline; }
+  #mqtt-connect.visible { display: inline-flex; }
+  #mqtt-broker {
+    background: var(--panel); color: var(--text);
+    border: 1px solid var(--panel-edge); border-radius: 6px;
+    padding: 6px 10px; width: 180px; font-size: .9rem;
+  }
+  #mqtt-connect-btn {
+    background: #243244; color: var(--text); border: 1px solid var(--panel-edge);
+    border-radius: 6px; padding: 6px 14px; cursor: pointer; font-weight: 700;
+    font-size: .8rem;
+  }
+  #mqtt-connect-btn:hover { background: #2d3f56; }
+  #mqtt-connect-btn:disabled { opacity: .5; cursor: default; }
+  #mqtt-status { font-size: .8rem; color: var(--muted); }
+  #mqtt-status.err { color: var(--red); }
   main { max-width: 1200px; margin: 0 auto; padding: 16px; }
   h1 { font-size: 1.5rem; margin: 8px 0 16px; }
   h2 { font-size: 1.05rem; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin: 0 0 12px; }
@@ -103,6 +113,32 @@
   }
   .charts { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); margin-top: 16px; }
   .chart-box { position: relative; height: 260px; }
+  /* OEE panel */
+  .oee-tiles { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); margin-bottom: 12px; }
+  .tile { background: #1d2530; border: 1px solid var(--panel-edge); border-radius: 8px; padding: 10px; text-align: center; }
+  .tile .tile-label { display: block; color: var(--muted); font-size: .75rem; text-transform: uppercase; letter-spacing: .06em; margin-bottom: 4px; }
+  .tile .tile-value { font-size: 1.4rem; font-weight: 700; }
+  .tile.oee-main .tile-value { color: var(--on); font-size: 1.7rem; }
+  .oee-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; border-top: 1px solid var(--panel-edge); padding-top: 12px; }
+  .oee-controls label { color: var(--muted); font-size: .9rem; }
+  .oee-controls input {
+    background: #1d2530; color: var(--text); border: 1px solid var(--panel-edge);
+    border-radius: 6px; padding: 6px 10px; width: 110px; font-size: .95rem;
+  }
+  .oee-controls input#conn-port { width: 70px; }
+  .oee-controls input#conn-user { width: 90px; }
+  .oee-controls input#conn-password { width: 110px; }
+  .oee-controls button {
+    background: #243244; color: var(--text); border: 1px solid var(--panel-edge);
+    border-radius: 6px; padding: 6px 14px; cursor: pointer; font-weight: 700; font-size: .85rem;
+  }
+  .oee-controls button:hover { background: #2d3f56; }
+  .oee-controls button:disabled { opacity: .5; cursor: default; }
+  #conn-status { font-size: .85rem; }
+  #conn-status.ok { color: var(--on); }
+  #conn-status.err { color: var(--red); }
+  #oee-error { color: var(--red); font-size: .85rem; min-width: 1px; }
+  #oee-chart-box { position: relative; height: 200px; margin-top: 12px; }
   footer { color: var(--muted); font-size: .85rem; margin: 24px 0 8px; line-height: 1.5; }
   #last-update { color: var(--muted); font-size: .8rem; }
 </style>
@@ -113,10 +149,15 @@
   <div id="topbar">
     <span class="seg" id="source-toggle">
       <button id="src-direct" type="button" title="Read the dashboard's own PLC over Ethernet (S7)">DIRECT</button>
-      <button id="src-mqtt" type="button" title="Subscribe to a line's MQTT broker">MQTT</button>
+      <button id="src-mqtt" type="button" title="Subscribe to an MQTT broker (type its address below)">MQTT</button>
     </span>
-    <span id="line-label">Line:</span>
-    <select id="line-select"></select>
+    <span id="mqtt-connect">
+      <input id="mqtt-broker" type="text" placeholder="192.168.0.11[:1883]" autocomplete="off"
+             title="MQTT broker address (IP or IP:port, default port 1883)">
+      <button id="mqtt-connect-btn" type="button"
+              title="Subscribe to the typed broker and show that line's data">Connect</button>
+      <span id="mqtt-status"></span>
+    </span>
     <span id="last-update"></span>
   </div>
   <h1>Conveyor Line Dashboard</h1>
@@ -152,6 +193,29 @@
   </div>
 
   <div class="charts">
+    <section class="panel" id="oee-panel">
+      <h2>OEE &mdash; Overall Equipment Effectiveness</h2>
+      <div class="oee-tiles">
+        <div class="tile oee-main"><span class="tile-label">OEE</span><span class="tile-value" id="oee-oee">&mdash;</span></div>
+        <div class="tile"><span class="tile-label">Availability</span><span class="tile-value" id="oee-availability">&mdash;</span></div>
+        <div class="tile"><span class="tile-label">Performance</span><span class="tile-value" id="oee-performance">&mdash;</span></div>
+        <div class="tile"><span class="tile-label">Quality</span><span class="tile-value" id="oee-quality">&mdash;</span></div>
+      </div>
+      <span id="oee-error"></span>
+      <div id="oee-chart-box"><canvas id="oee-chart"></canvas></div>
+      <div class="oee-controls">
+        <label for="conn-ip">OEE database</label>
+        <input id="conn-ip" type="text" placeholder="IP address" autocomplete="off">
+        <input id="conn-port" type="number" placeholder="Port" min="1" max="65535" autocomplete="off">
+        <input id="conn-user" type="text" placeholder="User" autocomplete="off">
+        <input id="conn-password" type="password" placeholder="Password" autocomplete="off">
+        <button id="conn-connect" type="button" title="Connect to the oee database on that server">Connect</button>
+        <span id="conn-status"></span>
+      </div>
+    </section>
+  </div>
+
+  <div class="charts">
     <section class="panel">
       <h2>Completed Cycles per Minute (last 10 min)</h2>
       <div class="chart-box"><canvas id="cycle-chart"></canvas></div>
@@ -163,17 +227,31 @@
   </div>
 
   <footer>
-    <strong>Limitations:</strong> Momentary button presses shorter than the polling
-    interval (~500&nbsp;ms) may not appear on this dashboard. The panel Reset button
-    is a PLC control only &mdash; it does not reset the cycle or metal-detection
-    counters shown here. In MQTT mode, edge events that occur while the dashboard
-    is stale, disconnected, or pointed at another line are not counted.
+    <strong>Limitations:</strong> Momentary button or sensor pulses shorter than
+    the polling interval (~500&nbsp;ms) may not appear on this dashboard &mdash;
+    the OEE recorder is subject to the same limitation, so a very quick part
+    passage may be missed entirely. OEE figures are not computed here: each
+    line PC runs a standalone recorder (<code>python -m app.recorder</code>)
+    that persists OEE history to that line's local <code>oee</code> PostgreSQL
+    database, independently of this dashboard. The panel above shows the data
+    of whichever OEE database you connect to; the connection parameters are
+    stored in your browser's localStorage in plain text. If a recorder is
+    stopped, its database simply stops receiving rows &mdash; there is no
+    liveness indicator in the stored data. In MQTT mode, edge events that
+    occur while the dashboard is stale, disconnected, or pointed at another
+    line are not counted.
   </footer>
 </main>
 
 <script>
 const STATE_URL = "/api/state";
 const STATS_URL = "/api/stats";
+const SOURCE_URL = "/api/source";
+const OEE_URL = "/api/oee";
+const OEE_HISTORY_URL = "/api/oee/history";
+const OEE_CONNECT_URL = "/api/oee/connection";
+const OEE_CONN_STORAGE_KEY = "oee-db-connection";
+const MQTT_BROKER_STORAGE_KEY = "mqtt-broker";
 
 function setLed(id, on) {
   document.getElementById(id).classList.toggle("on", on);
@@ -186,74 +264,102 @@ function setPill(id, on, onText, offText) {
   el.classList.toggle("on", on);
 }
 
-let selectedLine = null;   // currently selected line IP (mqtt mode)
 let sourceMode = "direct"; // "direct" | "mqtt"
 let switching = false;     // a /api/source request is in flight
 
-function renderLineControls(state) {
+function setMqttStatus(text, cls) {
+  const el = document.getElementById("mqtt-status");
+  el.textContent = text;
+  el.className = cls || "";
+}
+
+function renderSourceControls(state) {
   sourceMode = state.source || "direct";
   document.getElementById("src-direct").classList.toggle("active", sourceMode !== "mqtt");
   document.getElementById("src-mqtt").classList.toggle("active", sourceMode === "mqtt");
+  document.getElementById("mqtt-connect").classList.toggle("visible", sourceMode === "mqtt");
 
-  const lines = state.lines || {};
-  const select = document.getElementById("line-select");
-  const label = document.getElementById("line-label");
-  const mqttMode = sourceMode === "mqtt";
-  select.classList.toggle("visible", mqttMode);
-  label.classList.toggle("visible", mqttMode);
-  if (!mqttMode) return;
-
-  // (re)populate the dropdown when the line set changes
-  const keys = Object.keys(lines).join("|");
-  if (select.dataset.lines !== keys) {
-    select.dataset.lines = keys;
-    select.innerHTML = "";
-    for (const ip of Object.keys(lines)) {
-      const opt = document.createElement("option");
-      opt.value = ip;
-      opt.textContent = ip + "  (" + lines[ip] + ")";
-      select.appendChild(opt);
-    }
+  // show the active broker when the field is empty (e.g. restored session)
+  const input = document.getElementById("mqtt-broker");
+  if (sourceMode === "mqtt" && !input.value && state.broker) {
+    input.value = state.broker;
   }
-  if (state.line_ip && selectedLine !== state.line_ip) {
-    selectedLine = state.line_ip;
-    select.value = selectedLine;
+}
+
+async function connectMqttBroker() {
+  if (switching) return;
+  const input = document.getElementById("mqtt-broker");
+  const button = document.getElementById("mqtt-connect-btn");
+  const broker = input.value.trim();
+  if (!broker) {
+    setMqttStatus("broker IP is required", "err");
+    input.focus();
+    return;
+  }
+  switching = true;
+  button.disabled = true;
+  document.getElementById("src-direct").disabled = true;
+  document.getElementById("src-mqtt").disabled = true;
+  setMqttStatus("connecting\u2026", "");
+  try {
+    const res = await fetch(SOURCE_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source: "mqtt", broker: broker }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (res.ok) {
+      setMqttStatus("subscribed to " + broker, "");
+      saveMqttBroker(broker);
+    } else {
+      setMqttStatus(body.detail || "connection failed", "err");
+    }
+  } catch (err) {
+    setMqttStatus("connection failed", "err");
+  }
+  pollState();
+  button.disabled = false;
+  document.getElementById("src-direct").disabled = false;
+  document.getElementById("src-mqtt").disabled = false;
+  switching = false;
+}
+
+function saveMqttBroker(broker) {
+  try {
+    localStorage.setItem(MQTT_BROKER_STORAGE_KEY, JSON.stringify(broker));
+  } catch (err) { /* storage unavailable: broker just won't persist */ }
+}
+
+function loadMqttBroker() {
+  try {
+    const raw = localStorage.getItem(MQTT_BROKER_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (err) {
+    return null;
   }
 }
 
 async function switchSource(name) {
   if (switching || name === sourceMode) return;
+  if (name === "mqtt") {
+    // MQTT is always activated through the typed broker address
+    await connectMqttBroker();
+    return;
+  }
   switching = true;
   const buttons = document.querySelectorAll("#source-toggle button");
-  const select = document.getElementById("line-select");
   buttons.forEach(b => (b.disabled = true));
-  select.disabled = true;
   try {
-    await fetch("/api/source", {
+    await fetch(SOURCE_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ source: name }),
     });
   } catch (err) { /* state polling reflects the failure */ }
-  selectedLine = null; // charts follow the newly active source's line
+  setMqttStatus("", "");
   pollState();
   buttons.forEach(b => (b.disabled = false));
-  select.disabled = false;
   switching = false;
-}
-
-async function selectLine() {
-  const ip = document.getElementById("line-select").value;
-  if (!ip || ip === selectedLine) return;
-  selectedLine = ip;
-  try {
-    await fetch("/api/line", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ line_ip: ip }),
-    });
-  } catch (err) { /* state polling reflects the failure */ }
-  pollState();
 }
 
 function renderState(state) {
@@ -261,12 +367,13 @@ function renderState(state) {
   banner.classList.toggle("visible", state.stale || state.connecting);
   banner.classList.toggle("connecting", !!state.connecting && !state.stale);
   if (state.connecting && !state.stale) {
-    banner.textContent = "\u23F3 Connecting to line " + (state.line_ip || "") + " \u2026";
+    const target = state.broker || state.line_ip || "";
+    banner.textContent = "\u23F3 Connecting to " + (target ? target : "broker") + " \u2026";
   } else if (state.stale) {
     banner.textContent = "\u26A0 STALE \u2014 connection lost. Values frozen; updates resume automatically on reconnect.";
   }
 
-  renderLineControls(state);
+  renderSourceControls(state);
   document.getElementById("last-update").textContent = state.stale
     ? (state.last_update ? "(frozen at " + state.last_update + ")" : "(no data yet)")
     : "";
@@ -299,11 +406,23 @@ async function pollState() {
     document.getElementById("stale-banner").classList.add("visible");
   }
 }
-document.getElementById("line-select").addEventListener("change", selectLine);
+document.getElementById("mqtt-connect-btn").addEventListener("click", connectMqttBroker);
+document.getElementById("mqtt-broker").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") connectMqttBroker();
+});
 document.getElementById("src-direct").addEventListener("click", () => switchSource("direct"));
 document.getElementById("src-mqtt").addEventListener("click", () => switchSource("mqtt"));
 setInterval(pollState, 500);
 pollState();
+
+// auto-connect to the last successfully-submitted broker on page load
+(function autoConnectMqtt() {
+  const stored = loadMqttBroker();
+  if (!stored) return;
+  const input = document.getElementById("mqtt-broker");
+  if (!input.value) input.value = stored;
+  connectMqttBroker();
+})();
 
 const commonOptions = {
   responsive: true,
@@ -329,10 +448,8 @@ const metalChart = new Chart(document.getElementById("metal-chart"), {
 
 async function pollStats() {
   try {
-    const url = selectedLine && sourceMode === "mqtt"
-      ? STATS_URL + "?line_ip=" + encodeURIComponent(selectedLine)
-      : STATS_URL;
-    const res = await fetch(url, { cache: "no-store" });
+    /* counts are process-local for the active connection; no line filter */
+    const res = await fetch(STATS_URL, { cache: "no-store" });
     if (!res.ok) return;
     const stats = await res.json();
     const labels = stats.points.map(p => p.minute);
@@ -352,6 +469,156 @@ async function pollStats() {
 }
 setInterval(pollStats, 2000);
 pollStats();
+
+// ---- OEE panel (database-backed) ----
+
+function fmtPct(v) {
+  return (v === null || v === undefined) ? "\u2014" : v.toFixed(1) + "%";
+}
+
+function setText(id, text) {
+  const el = document.getElementById(id);
+  if (el.textContent !== text) el.textContent = text;
+}
+
+function renderOee(oee) {
+  setText("oee-oee", fmtPct(oee.oee));
+  setText("oee-availability", fmtPct(oee.availability));
+  setText("oee-performance", fmtPct(oee.performance));
+  setText("oee-quality", fmtPct(oee.quality));
+  setText("oee-error", oee.error || "");
+}
+
+async function pollOee() {
+  try {
+    const res = await fetch(OEE_URL, { cache: "no-store" });
+    if (!res.ok) return;
+    renderOee(await res.json());
+  } catch (err) {
+    /* OEE figures are advisory; the connection bar covers DB problems */
+  }
+}
+setInterval(pollOee, 1000);
+pollOee();
+
+// -- OEE trend chart (OEE over the last 10 minutes) --
+
+const oeeChart = new Chart(document.getElementById("oee-chart"), {
+  type: "line",
+  data: { labels: [], datasets: [{ label: "OEE %", data: [], borderColor: "#2ecc71", tension: 0.2, spanGaps: true }] },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: false,
+    scales: {
+      x: { ticks: { color: "#8fa1b3" }, grid: { color: "#2c3947" } },
+      y: { beginAtZero: true, suggestedMax: 100, ticks: { color: "#8fa1b3" }, grid: { color: "#2c3947" } }
+    },
+    plugins: { legend: { display: false } }
+  }
+});
+
+function renderOeeHistory(points) {
+  oeeChart.data.labels = points.map(p => {
+    const d = new Date(p.timestamp);
+    return isNaN(d) ? "" : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  });
+  oeeChart.data.datasets[0].data = points.map(p => p.oee);
+  oeeChart.update();
+}
+
+async function pollOeeHistory() {
+  try {
+    const res = await fetch(OEE_HISTORY_URL + "?minutes=10", { cache: "no-store" });
+    if (!res.ok) return;
+    renderOeeHistory((await res.json()).points || []);
+  } catch (err) {
+    /* advisory */
+  }
+}
+setInterval(pollOeeHistory, 5000);
+pollOeeHistory();
+
+// -- OEE database connection bar --
+
+function connInputs() {
+  return {
+    ip: document.getElementById("conn-ip").value.trim(),
+    port: parseInt(document.getElementById("conn-port").value, 10),
+    user: document.getElementById("conn-user").value.trim(),
+    password: document.getElementById("conn-password").value,
+  };
+}
+
+function setConnStatus(text, cls) {
+  const el = document.getElementById("conn-status");
+  el.textContent = text;
+  el.className = cls || "";
+}
+
+function saveConnToStorage(conn) {
+  try {
+    localStorage.setItem(OEE_CONN_STORAGE_KEY, JSON.stringify(conn));
+  } catch (err) { /* storage unavailable: connection just won't persist */ }
+}
+
+function loadConnFromStorage() {
+  try {
+    return JSON.parse(localStorage.getItem(OEE_CONN_STORAGE_KEY));
+  } catch (err) {
+    return null;
+  }
+}
+
+async function connectOeeDatabase(conn) {
+  const button = document.getElementById("conn-connect");
+  button.disabled = true;
+  try {
+    const res = await fetch(OEE_CONNECT_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(conn),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (res.ok) {
+      setConnStatus("connected to " + conn.ip + ":" + conn.port + " (oee)", "ok");
+      saveConnToStorage(conn);
+      pollOee();
+      pollOeeHistory();
+      return true;
+    }
+    setConnStatus(body.detail || "connection failed", "err");
+    return false;
+  } catch (err) {
+    setConnStatus("connection failed", "err");
+    return false;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+document.getElementById("conn-connect").addEventListener("click", async () => {
+  const conn = connInputs();
+  if (!conn.ip || !conn.port || !conn.user) {
+    setConnStatus("IP, port, and user are required", "err");
+    return;
+  }
+  await connectOeeDatabase(conn);
+});
+document.getElementById("conn-password").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") document.getElementById("conn-connect").click();
+});
+
+// auto-reconnect to the last successful connection on page load
+(function autoReconnect() {
+  const stored = loadConnFromStorage();
+  if (!stored) return;
+  document.getElementById("conn-ip").value = stored.ip || "";
+  document.getElementById("conn-port").value = stored.port || "";
+  document.getElementById("conn-user").value = stored.user || "";
+  document.getElementById("conn-password").value = stored.password || "";
+  connectOeeDatabase(stored);
+})();
 </script>
 </body>
 </html>

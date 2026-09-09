@@ -1,15 +1,11 @@
 """End-to-end MQTT integration test: broker + publisher + dashboard source.
 
 Runs in the default test suite: no PLC needed (fake reader), no external
-broker (in-process amqtt). Requires the local PostgreSQL server.
+broker (in-process amqtt), no database (events are captured in memory).
 """
 
 import time
 
-import paho.mqtt.client as mqtt
-
-from app.config import load_config
-from app.db import connect_db, per_minute_counts
 from app.mqtt_source import MqttLineSource
 from app.publisher import LinePublisher
 
@@ -46,58 +42,53 @@ def wait_for(predicate, timeout=10.0):
     return False
 
 
-def cleanup_events(dsn, event_type):
-    with connect_db(dsn) as conn:
-        conn.execute("DELETE FROM line_events WHERE event_type = %s", (event_type,))
-        conn.commit()
-
-
-def test_mqtt_round_trip_edges_and_lwt(mqtt_broker):
-    dsn = load_config().database_url
-    line_ip = "10.7.7.7"
+def test_mqtt_round_trip_and_silence_liveness(mqtt_broker):
     reader = FakeReader()
-    publisher = LinePublisher(reader, line_ip, "127.0.0.1", mqtt_broker.port, poll_interval_ms=50)
+    publisher = LinePublisher(reader, "127.0.0.1", mqtt_broker.port, poll_interval_ms=50)
+    recorded: list[str] = []
     source = MqttLineSource(
         broker_host="127.0.0.1",
         broker_port=mqtt_broker.port,
-        dsn=dsn,
         poll_interval_ms=50,
-        line_ip=line_ip,
         staleness_ms=1000,
+        on_event=recorded.append,
     )
     try:
         publisher.start()
         source.start()
 
-        # 1) retained snapshot delivered immediately on subscribe
+        # 1) fresh packets arrive; the first is baseline, values render
         assert wait_for(lambda: source.snapshot()["values"] is not None), (
-            "dashboard never received a retained snapshot"
+            "dashboard never received a plc_tags snapshot"
         )
         assert source.snapshot()["stale"] is False
         assert source.snapshot()["source"] == "mqtt"
+        assert source.snapshot()["broker"] == f"127.0.0.1:{mqtt_broker.port}"
 
-        # 2) edge counting after baseline: P3 rising -> cycle_complete persisted
+        # 2) edge counting after baseline: P3 rising -> cycle_complete recorded
         set_bit(reader.outputs, 0, 6)
-        assert wait_for(lambda: any(
-            p["cycles"] for p in per_minute_counts(dsn, line_ip=line_ip)
-        )), "P3 rising edge was not counted"
+        assert wait_for(lambda: "cycle_complete" in recorded), (
+            "P3 rising edge was not counted"
+        )
 
         # no duplicates while P3 stays ON
         time.sleep(0.3)
-        counts = [p["cycles"] for p in per_minute_counts(dsn, line_ip=line_ip)]
-        assert sum(counts) == 1
+        assert recorded.count("cycle_complete") == 1
 
-        # 3) publisher crash: LWT offline -> dashboard goes stale, values frozen
+        # 3) publisher crash: packets stop, silence (~1 s) marks stale,
+        #    values stay frozen (no LWT, no status topic involved)
         frozen_update = source.snapshot()["last_update"]
+        frozen_green = source.snapshot()["values"]["lights"]["green"]
         sock = publisher._mqtt.socket()
         assert sock is not None
         sock.close()
-        assert wait_for(lambda: source.snapshot()["stale"]), "LWT offline did not mark stale"
+        publisher._stop.set()
+        assert wait_for(lambda: source.snapshot()["stale"], timeout=10), (
+            "silence did not mark the connection stale"
+        )
         snap = source.snapshot()
-        assert snap["values"]["lights"]["green"] is True  # frozen, not blanked
+        assert snap["values"]["lights"]["green"] is frozen_green  # frozen, not blanked
         assert snap["last_update"] == frozen_update
     finally:
         source.stop()
         publisher.stop()
-        cleanup_events(dsn, "cycle_complete")
-        cleanup_events(dsn, "metal_detected")

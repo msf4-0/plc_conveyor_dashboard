@@ -2,7 +2,6 @@ import time
 
 import pytest
 
-from app.db import connect_db, per_minute_counts
 from app.plc import PlcPoller
 
 
@@ -40,15 +39,13 @@ def set_bit(data: bytearray, byte: int, bit: int, value: bool):
 
 
 @pytest.fixture()
-def poller_env(monkeypatch):
-    from app.config import load_config
-
-    dsn = load_config().database_url
+def poller_env():
     inputs = bytearray(2)
     outputs = bytearray(2)
     reader = FakePlcReader(inputs, outputs)
-    poller = PlcPoller(reader, dsn, poll_interval_ms=20)
-    yield reader, poller, dsn
+    events: list[str] = []
+    poller = PlcPoller(reader, poll_interval_ms=20, on_event=events.append)
+    yield reader, poller, events
     poller.stop()
 
 
@@ -59,12 +56,6 @@ def wait_for(predicate, timeout=5.0):
             return True
         time.sleep(0.02)
     return False
-
-
-def cleanup_events(dsn, event_type):
-    with connect_db(dsn) as conn:
-        conn.execute("DELETE FROM line_events WHERE event_type = %s", (event_type,))
-        conn.commit()
 
 
 def test_values_refresh_at_poll_rate(poller_env):
@@ -97,7 +88,7 @@ def test_view_reflects_plc_values(poller_env):
 
 
 def test_stale_freeze_and_reconnect_rebaseline(poller_env):
-    reader, poller, dsn = poller_env
+    reader, poller, events = poller_env
     set_bit(reader.outputs, 0, 6, True)  # P3 ON before outage
     poller.start()
     assert wait_for(lambda: poller.snapshot()["connected"])
@@ -115,37 +106,22 @@ def test_stale_freeze_and_reconnect_rebaseline(poller_env):
     reader.fail_reads = False
     assert wait_for(lambda: poller.snapshot()["connected"])
     time.sleep(0.2)
-    counts = [p for p in per_minute_counts(dsn) if p["cycles"]]
-    assert counts == []  # no phantom cycle counted on reconnect
+    assert events == []  # no phantom cycle counted on reconnect
 
     # after baseline, a genuine P3 rising edge is still detected
     set_bit(reader.outputs, 0, 6, True)
-    try:
-        assert wait_for(
-            lambda: any(p["cycles"] for p in per_minute_counts(dsn)), timeout=5
-        )
-    finally:
-        cleanup_events(dsn, "cycle_complete")
+    assert wait_for(lambda: "cycle_complete" in events, timeout=5)
 
 
-def test_events_persisted_on_edges(poller_env):
-    reader, poller, dsn = poller_env
+def test_events_recorded_on_edges(poller_env):
+    reader, poller, events = poller_env
     poller.start()
     assert wait_for(lambda: poller.snapshot()["connected"])
-    try:
-        set_bit(reader.outputs, 0, 6, True)  # P3 rising -> cycle_complete
-        assert wait_for(
-            lambda: any(p["cycles"] for p in per_minute_counts(dsn))
-        )
-        set_bit(reader.inputs, 1, 0, True)  # B4 rising -> metal_detected
-        assert wait_for(
-            lambda: any(p["metal"] for p in per_minute_counts(dsn))
-        )
-        # no duplicates while signals stay ON
-        time.sleep(0.2)
-        cycles_now = sum(p["cycles"] for p in per_minute_counts(dsn))
-        metal_now = sum(p["metal"] for p in per_minute_counts(dsn))
-        assert cycles_now == 1 and metal_now == 1
-    finally:
-        cleanup_events(dsn, "cycle_complete")
-        cleanup_events(dsn, "metal_detected")
+    set_bit(reader.outputs, 0, 6, True)  # P3 rising -> cycle_complete
+    assert wait_for(lambda: "cycle_complete" in events)
+    set_bit(reader.inputs, 1, 0, True)  # B4 rising -> metal_detected
+    assert wait_for(lambda: "metal_detected" in events)
+    # no duplicates while signals stay ON
+    time.sleep(0.2)
+    assert events.count("cycle_complete") == 1
+    assert events.count("metal_detected") == 1

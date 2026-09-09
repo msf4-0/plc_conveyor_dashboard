@@ -1,9 +1,9 @@
 import logging
 import threading
 import time
+from collections.abc import Callable
 from datetime import datetime, timezone
 
-from app.db import insert_event
 from app.edges import detect_events
 from app.tags import TAGS, button_pressed, raw_values
 
@@ -53,9 +53,10 @@ class PlcPoller:
     on reconnect the first snapshot only re-baselines edge detection.
     """
 
-    def __init__(self, reader, dsn: str, poll_interval_ms: int, line_ip: str = ""):
+    def __init__(self, reader, poll_interval_ms: int, line_ip: str = "",
+                 on_event: Callable[[str], None] | None = None):
         self._reader = reader
-        self._dsn = dsn
+        self._on_event = on_event
         self._line_ip = line_ip
         self._poll_interval = poll_interval_ms / 1000.0
         self._lock = threading.Lock()
@@ -121,10 +122,11 @@ class PlcPoller:
         self._previous_raw = raw
         for event in events:
             try:
-                insert_event(self._dsn, event, line_ip=self._line_ip)
-                log.info("Recorded event: %s", event)
+                if self._on_event is not None:
+                    self._on_event(event)
+                    log.info("Recorded event: %s", event)
             except Exception:
-                log.exception("Failed to persist event %s", event)
+                log.exception("Failed to record event %s", event)
         with self._lock:
             self._raw = raw
             self._timestamp = datetime.now(timezone.utc).isoformat()

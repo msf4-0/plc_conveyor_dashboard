@@ -7,8 +7,9 @@ import paho.mqtt.client as mqtt
 import pytest
 
 from app.broker import start_broker, stop_broker
-from app.mqtt_proto import parse_snapshot, state_topic, status_topic
+from app.mqtt_proto import TAGS_TOPIC, parse_payload
 from app.publisher import LinePublisher
+from app.tags import raw_values
 
 
 class FakeReader:
@@ -83,7 +84,7 @@ class Collector:
         self.client.on_message = self._on_message
         self.client.connect("127.0.0.1", port)
         self.client.loop_start()
-        self.client.subscribe([(state_topic("10.9.9.9"), 0), (status_topic("10.9.9.9"), 0)])
+        self.client.subscribe([(TAGS_TOPIC, 0)])
 
     def _on_message(self, client, userdata, msg):
         self.messages.append((msg.topic, msg.payload, msg.retain))
@@ -91,6 +92,9 @@ class Collector:
     def stop(self):
         self.client.loop_stop()
         self.client.disconnect()
+
+    def tags(self):
+        return [m for m in self.messages if m[0] == TAGS_TOPIC]
 
     def wait_for(self, predicate, timeout=5.0):
         deadline = time.time() + timeout
@@ -104,70 +108,51 @@ class Collector:
 @pytest.fixture()
 def publisher(broker_port):
     reader = FakeReader()
-    pub = LinePublisher(reader, "10.9.9.9", "127.0.0.1", broker_port, poll_interval_ms=50)
+    pub = LinePublisher(reader, "127.0.0.1", broker_port, poll_interval_ms=50)
     yield reader, pub
     if pub._thread is not None:
         pub.stop()
 
 
-def test_publisher_cadence_retain_and_status(publisher, broker_port):
+def test_publisher_cadence_payload_and_no_retain(publisher, broker_port):
     reader, pub = publisher
     collector = Collector(broker_port)
     try:
         pub.start()
-        assert collector.wait_for(lambda ms: any(m[0] == status_topic("10.9.9.9") and m[1] == b"online" for m in ms))
         assert collector.wait_for(
-            lambda ms: sum(1 for m in ms if m[0] == state_topic("10.9.9.9")) >= 3, timeout=5
+            lambda ms: sum(1 for m in ms if m[0] == TAGS_TOPIC) >= 3, timeout=5
         )
-        # payload decodes to the exact bytes the publisher read
-        state_msgs = [m for m in collector.messages if m[0] == state_topic("10.9.9.9")]
-        snap = parse_snapshot(state_msgs[-1][1])
-        assert snap["plc_ip"] == "10.9.9.9"
-        assert snap["inputs"] == bytes(reader.inputs)
-        assert snap["outputs"] == bytes(reader.outputs)
+        # payload carries exactly the tag booleans the publisher read
+        payload = parse_payload(collector.tags()[-1][1])
+        expected = raw_values(bytes(reader.inputs), bytes(reader.outputs))
+        assert payload == expected
+        # no retain flag: a late subscriber must wait for a fresh packet
+        assert all(not m[2] for m in collector.messages)
+        # nothing is ever published to a status topic
+        assert all(m[0] == TAGS_TOPIC for m in collector.messages)
         # PLC failure: no new snapshots while it lasts
-        before = reader.read_count
         reader.fail = True
+        count_at_fail = len(collector.tags())
         time.sleep(0.3)
-        after_msgs = [m for m in collector.messages if m[0] == state_topic("10.9.9.9")]
-        assert len(after_msgs) >= 1
-        count_at_fail = len(after_msgs)
-        time.sleep(0.3)
-        assert len([m for m in collector.messages if m[0] == state_topic("10.9.9.9")]) == count_at_fail
+        assert len(collector.tags()) == count_at_fail
         reader.fail = False
     finally:
         collector.stop()
 
 
-def test_publisher_lwt_on_abrupt_disconnect(publisher, broker_port):
+def test_publisher_clean_stop_publishes_nothing_extra(publisher, broker_port):
     reader, pub = publisher
     collector = Collector(broker_port)
     try:
         pub.start()
-        assert collector.wait_for(lambda ms: any(m[1] == b"online" for m in ms))
-        # simulate a publisher crash: kill the TCP connection abruptly
-        sock = pub._mqtt.socket()
-        assert sock is not None
-        sock.close()
-        assert collector.wait_for(lambda ms: any(m[0] == status_topic("10.9.9.9") and m[1] == b"offline" for m in ms), timeout=10)
-    finally:
-        collector.stop()
-
-
-def test_publisher_clean_stop_publishes_offline(publisher, broker_port):
-    reader, pub = publisher
-    collector = Collector(broker_port)
-    try:
-        pub.start()
-        assert collector.wait_for(lambda ms: any(m[1] == b"online" for m in ms))
+        assert collector.wait_for(lambda ms: any(m[0] == TAGS_TOPIC for m in ms))
     finally:
         collector.stop()
     pub.stop()
     collector = Collector(broker_port)
     try:
-        # new subscriber sees retained offline status
-        assert collector.wait_for(
-            lambda ms: any(m[0] == status_topic("10.9.9.9") and m[1] == b"offline" for m in ms), timeout=5
-        )
+        # no retained snapshot, no status message: a new subscriber gets nothing
+        time.sleep(0.5)
+        assert collector.messages == []
     finally:
         collector.stop()

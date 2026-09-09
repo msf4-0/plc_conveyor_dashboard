@@ -5,8 +5,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from psycopg import connect
 
-from app.config import load_config
-from app.db import ensure_schema
+from app.config import load_recorder_config
+from app.db import ensure_oee_schema
 
 
 def create_database(dsn: str) -> None:
@@ -26,10 +26,12 @@ def create_database(dsn: str) -> None:
 
 
 def main() -> None:
-    cfg = load_config()
-    create_database(cfg.database_url)
-    ensure_schema(cfg.database_url, default_line_ip=cfg.plc_ip)
-    print(f"Schema ensured: table line_events (+ index, line_ip default '{cfg.plc_ip}')")
+    # OEE recorder database (history rows) — requires OEE_DATABASE_URL.
+    # The dashboard itself needs no database: per-minute counts are in-memory.
+    rec = load_recorder_config()
+    create_database(rec.oee_database_url)
+    ensure_oee_schema(rec.oee_database_url)
+    print(f"Schema ensured: table oee in '{rec.oee_database_url.rpartition('/')[2]}'")
 
 
 if __name__ == "__main__":
