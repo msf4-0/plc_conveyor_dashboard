@@ -29,7 +29,7 @@ The system SHALL poll the PLC inputs and outputs listed in `plc_tags.csv` (ESO, 
 - **THEN** process-image values are refreshed and made available to the UI at a rate of approximately 500 ms
 
 ### Requirement: Stale data handling on connection loss
-The system SHALL freeze the last received values on screen and SHALL display a prominent "stale / connection lost" banner when the connection to the PLC is lost in `direct` mode, or when MQTT liveness signals staleness (offline status or snapshot silence) in `mqtt` mode. The system SHALL resume live updates automatically when the connection (direct) or fresh snapshots (MQTT) are re-established.
+The system SHALL freeze the last received values on screen and SHALL display a prominent "stale / connection lost" banner when the connection to the PLC is lost in `direct` mode, or when the MQTT connection has been silent for longer than the staleness timeout in `mqtt` mode. The system SHALL resume live updates automatically when the connection (direct) or fresh snapshots (MQTT) are re-established.
 
 #### Scenario: Connection lost during operation
 - **WHEN** the PLC connection drops while the dashboard runs in `direct` mode
@@ -40,19 +40,19 @@ The system SHALL freeze the last received values on screen and SHALL display a p
 - **THEN** the stale banner is removed and live updates resume without user intervention
 
 #### Scenario: Stale banner in MQTT mode
-- **WHEN** the selected line becomes stale in `mqtt` mode
+- **WHEN** the connected broker's snapshots stop arriving in `mqtt` mode
 - **THEN** the last received values remain displayed with the same prominent stale banner
 
 ### Requirement: Selectable data source
-The dashboard SHALL support two data sources: `direct` (a direct read-only S7 connection to the configured PLC, behaving exactly as before this change) and `mqtt` (subscribing to the MQTT broker of the selected line). The startup source SHALL be selected by configuration (`DATA_SOURCE`), and the active source SHALL be switchable at runtime from the dashboard. The active source SHALL be indicated on the UI.
+The dashboard SHALL support two data sources: `direct` (a direct read-only S7 connection to the configured PLC, behaving exactly as before this change) and `mqtt` (subscribing to a user-supplied MQTT broker address). The startup source SHALL be selected by configuration (`DATA_SOURCE`), and the active source SHALL be switchable at runtime from the dashboard. The active source SHALL be indicated on the UI.
 
 #### Scenario: Direct mode unchanged
 - **WHEN** the data source is configured as `direct`
 - **THEN** the dashboard polls the configured PLC over S7 as it did before this change
 
 #### Scenario: MQTT mode subscribes to the selected line
-- **WHEN** the data source is configured as `mqtt`
-- **THEN** the dashboard subscribes to the selected line's broker and its displayed state derives from received MQTT snapshots
+- **WHEN** the data source is configured as `mqtt` and a broker address has been submitted
+- **THEN** the dashboard subscribes to the submitted broker (the selected line) and its displayed state derives from received MQTT snapshots, ignoring all other brokers
 
 #### Scenario: Source shown on UI
 - **WHEN** the dashboard is viewed
@@ -63,11 +63,11 @@ The dashboard SHALL support two data sources: `direct` (a direct read-only S7 co
 - **THEN** the dashboard switches data sources without requiring an application restart
 
 ### Requirement: Runtime source switching
-The dashboard SHALL allow switching the active data source between `direct` and `mqtt` at runtime without an application restart. `direct` SHALL always mean a read-only S7 connection to the dashboard's own configured PLC (`PLC_IP`/`PLC_RACK`/`PLC_SLOT`); direct connections to other lines' PLCs are out of scope. Switching sources SHALL stop the previous source, start the requested one from the existing configuration, clear the displayed values, show a "connecting…" state until the new source delivers data (or stale, if it cannot), and indicate the active source on the UI. The startup source SHALL remain the `DATA_SOURCE` configuration value.
+The dashboard SHALL allow switching the active data source between `direct` and `mqtt` at runtime without an application restart. `direct` SHALL always mean a read-only S7 connection to the dashboard's own configured PLC (`PLC_IP`/`PLC_RACK`/`PLC_SLOT`); direct connections to other lines' PLCs are out of scope. Switching sources SHALL stop the previous source, start the requested one from the supplied configuration (for `mqtt`, the submitted broker address), clear the displayed values, show a "connecting…" state until the new source delivers data (or stale, if it cannot), and indicate the active source on the UI. The startup source SHALL remain the `DATA_SOURCE` configuration value.
 
 #### Scenario: Switch from direct to MQTT at runtime
-- **WHEN** the user requests the `mqtt` source while `direct` is active
-- **THEN** the S7 poller stops, the dashboard subscribes to the configured MQTT broker/line, the previous values are cleared, and the connecting state shows until MQTT data arrives
+- **WHEN** the user requests the `mqtt` source with a broker address while `direct` is active
+- **THEN** the S7 poller stops, the dashboard subscribes to the submitted broker, the previous values are cleared, and the connecting state shows until MQTT data arrives
 
 #### Scenario: Switch from MQTT to direct at runtime
 - **WHEN** the user requests the `direct` source while `mqtt` is active
@@ -75,7 +75,7 @@ The dashboard SHALL allow switching the active data source between `direct` and 
 
 #### Scenario: Switch to an unavailable source
 - **WHEN** the user requests a source whose PLC or broker is unreachable
-- **THEN** the previous values are cleared, a connecting state is shown, and the line becomes stale after the applicable staleness behaviour, while the dashboard keeps retrying
+- **THEN** the previous values are cleared, a connecting state is shown, and the connection becomes stale after the applicable staleness behaviour, while the dashboard keeps retrying
 
 #### Scenario: No phantom counts across a source switch
 - **WHEN** the active signal (for example the green tower light P3) is already ON when a newly started source delivers its first snapshot
@@ -86,49 +86,50 @@ The dashboard SHALL allow switching the active data source between `direct` and 
 - **THEN** the request is rejected with an error and the active source is unchanged
 
 ### Requirement: Stats follow the active source
-Per-minute statistics SHALL default to the active source's connection: the configured PLC's IP in `direct` mode, the selected line's PLC IP in `mqtt` mode. Per-minute counts are kept in memory for the currently active connection only; when the active source or line changes, the counts SHALL reset and the charts SHALL start from an empty window for the newly connected line (no counts from the previous connection or from other lines are shown).
+Per-minute statistics SHALL default to the active source's connection: the configured PLC's IP in `direct` mode, the submitted broker address in `mqtt` mode. Per-minute counts are kept in memory for the currently active connection only; when the active source or broker address changes, the counts SHALL reset and the charts SHALL start from an empty window for the newly connected target (no counts from the previous connection are shown).
 
 #### Scenario: Charts follow a source switch
-- **WHEN** the user switches from the MQTT line `10.0.0.2` back to `direct` (the configured PLC)
+- **WHEN** the user switches from a MQTT broker back to `direct` (the configured PLC)
 - **THEN** the per-minute charts start from an empty window for the configured PLC and fill only with newly counted events
 
-#### Scenario: Stats request for a non-active line
-- **WHEN** a stats request names a line other than the currently connected one
-- **THEN** the response reflects the active connection's counts (the request's line filter has no effect)
+#### Scenario: Stats request for a non-active connection
+- **WHEN** a stats request names a connection other than the currently active one
+- **THEN** the response reflects the active connection's counts (the request's filter has no effect)
 
-### Requirement: Line registry and selection
-In MQTT mode the dashboard SHALL hold a registry of known lines mapping each line's PLC IP address to its broker `host:port`, SHALL present these lines in a dropdown identified by PLC IP, and SHALL connect only to the selected line's broker. The dashboard SHALL also accept a directly configured broker address for MQTT mode even when the line is not in the registry.
+### Requirement: Broker address selection
+In `mqtt` mode the dashboard SHALL accept a broker address typed by the user, in the form `IP` or `IP:port` where a bare IP defaults to port 1883, and SHALL connect (or reconnect) the MQTT source to that address when it is submitted. Submitting a new address while already in `mqtt` mode SHALL behave like a source switch: displayed values are cleared, a "connecting…" state shows, and counting re-baselines (no counts credited across the change). The dashboard SHALL remember the last submitted address in browser localStorage, pre-fill the field with it, and auto-connect to it on page load. When `mqtt` is the startup source (`DATA_SOURCE=mqtt`) and no address has been submitted yet, the dashboard SHALL show the connecting state and operate no MQTT source until an address is submitted.
 
-#### Scenario: Lines listed for selection
-- **WHEN** the dashboard runs in MQTT mode with a non-empty registry
-- **THEN** the dropdown lists every registered line, identified by its PLC IP, and the currently selected line is highlighted
+#### Scenario: Bare IP defaults to port 1883
+- **WHEN** the user submits `192.168.0.11`
+- **THEN** the dashboard connects to the broker at `192.168.0.11:1883`
 
-#### Scenario: Only the selected line is subscribed
-- **WHEN** a line is selected in the dropdown
-- **THEN** the dashboard subscribes only to that line's broker and ignores other lines
+#### Scenario: Explicit port accepted
+- **WHEN** the user submits `192.168.0.11:1884`
+- **THEN** the dashboard connects to the broker at `192.168.0.11:1884`
 
-### Requirement: Line switching behaviour
-When the user selects a different line, the dashboard SHALL unsubscribe from the previous line, clear the displayed values, show a "connecting…" state until the first snapshot of the new line arrives, and then show live or stale state as usual.
+#### Scenario: Retyping an address while in MQTT mode
+- **WHEN** the user submits a new broker address while the `mqtt` source is already active
+- **THEN** the previous subscription stops, the displayed values are cleared, a connecting state shows until data arrives, and no counts from the previous broker remain
 
-#### Scenario: Switch to an online line
-- **WHEN** the user selects a new line whose broker and publisher are running
-- **THEN** the previous line's values are cleared, a connecting state is shown briefly, and the new line's live state appears
+#### Scenario: Startup in MQTT mode without an address
+- **WHEN** the dashboard starts with `DATA_SOURCE=mqtt` and the user has not submitted an address
+- **THEN** no MQTT source is active and the UI shows the connecting state until an address is submitted
 
-#### Scenario: Switch to an unreachable line
-- **WHEN** the user selects a line whose broker is unreachable
-- **THEN** the previous line's values are cleared, a connecting state is shown, and the line becomes stale after the staleness timeout
+#### Scenario: Address remembered across page loads
+- **WHEN** a broker address has been successfully submitted and the page is reloaded
+- **THEN** the field is pre-filled with that address and the dashboard auto-connects to it
 
 ### Requirement: MQTT liveness detection
-In MQTT mode the dashboard SHALL mark the selected line stale when either its status topic reports `offline` or no new snapshot has arrived for a staleness timeout of approximately 2 seconds (four poll intervals). When `online` status or fresh snapshots resume, the stale state SHALL clear automatically.
+In MQTT mode the dashboard SHALL judge liveness by packet cadence alone: the connection SHALL be marked stale when no new snapshot has arrived for a staleness timeout of approximately 1 second. There SHALL be no status topic, offline message, or Last Will involved in liveness. When fresh snapshots resume, the stale state SHALL clear automatically and the first snapshot after a stale period SHALL only re-baseline (no counts).
 
 #### Scenario: Publisher goes offline
-- **WHEN** the line's status topic changes to `offline`
-- **THEN** the dashboard shows the stale/disconnected state for that line
+- **WHEN** the publisher process dies or disconnects from its broker
+- **THEN** `plc_tags` packets stop arriving and the dashboard marks the connection stale within approximately 1 second
 
 #### Scenario: Silent broker
-- **WHEN** no snapshot has been received for approximately 2 seconds while status remains `online`
+- **WHEN** no snapshot has been received for approximately 1 second
 - **THEN** the dashboard shows the stale state
 
 #### Scenario: Recovery
-- **WHEN** fresh snapshots (or `online` status) resume after a stale period
-- **THEN** the stale state clears and live values resume
+- **WHEN** fresh snapshots resume after a stale period
+- **THEN** the stale state clears, live values resume, and no count is generated from the first snapshot after the gap

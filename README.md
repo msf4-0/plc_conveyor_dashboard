@@ -110,7 +110,8 @@ Line PC (one per PLC)                                Any PC: dashboard
 - **app/edges.py** — rising-edge detection: P3 OFF→ON = cycle complete, B4 OFF→ON = metal detected; no duplicate while ON, no phantom edges after reconnect/switch.
 - **app/source_manager.py** — owns the active data source (direct/MQTT) and the active broker address; an inactive MQTT slot reports "connecting" until an address is submitted, and submitting a different address rebuilds the source; forwards edge events to the counter and fires a connection-change hook (counter reset) after a successful source or broker switch.
 - **app/db.py** — psycopg (v3) access to the `oee` database only (ensure schema, insert row, latest row, history window, connection test). Count events are not stored.
-- **app/main.py** — FastAPI: serves the UI and `GET /api/state`, `GET /api/stats` (in-memory per-minute counts for the active connection), `POST /api/source` (switch sources; MQTT takes a `broker` address `IP` or `IP:port`, default port 1883), plus the OEE endpoints `POST /api/oee/connection` (test + activate a line's `oee` database), `GET /api/oee` (latest row), `GET /api/oee/history?minutes=`.
+- **app/mcp_server.py** — MCP server for chatbots / external AI agents (n8n MCP Client Tool): exactly two read-only tools, `get_iq_data` (live 14-tag I/Q snapshot from the active source, with tag descriptions) and `get_latest_oee` (latest OEE row read directly from `OEE_DATABASE_URL`, independent of the dashboard's UI-connected OEE database).
+- **app/main.py** — FastAPI: serves the UI and `GET /api/state`, `GET /api/stats` (in-memory per-minute counts for the active connection), `POST /api/source` (switch sources; MQTT takes a `broker` address `IP` or `IP:port`, default port 1883), plus the OEE endpoints `POST /api/oee/connection` (test + activate a line's `oee` database), `GET /api/oee` (latest row), `GET /api/oee/history?minutes=`. It also mounts the MCP server's Streamable HTTP endpoint at `/mcp`.
 - **app/static/index.html** — single-page dashboard: tower-light LEDs, button pills (polarity pre-applied by the backend), conveyor state, sensor pills, stale/connecting banner, source toggle + typed MQTT broker input with Connect button (broker address persisted in browser localStorage), two Chart.js bar charts, and a database-backed OEE panel (tiles + trend chart + connection bar with browser localStorage persistence).
 
 ## Setup
@@ -204,6 +205,25 @@ running, the DIRECT | MQTT toggle in the header switches between them live
 ```
 
 Open http://127.0.0.1:8000 in a browser.
+
+### MCP endpoint (AI agents / n8n)
+
+The dashboard process also serves an MCP server at the same host and port:
+
+```
+http://127.0.0.1:8000/mcp
+```
+
+Point an MCP client at that URL — e.g. n8n's MCP Client Tool node with the
+**HTTP Streamable** transport type (no auth headers). It exposes exactly two
+read-only tools:
+
+- `get_iq_data` — the live 14-tag I/Q boolean snapshot from the active data
+  source (direct PLC or MQTT), with per-tag descriptions and connection status.
+- `get_latest_oee` — the latest OEE row (availability/performance/quality/oee)
+  read directly from `OEE_DATABASE_URL`; independent of the dashboard's
+  UI-connected OEE database (if the variable is unset, the tool reports
+  "not configured" and everything else works unchanged).
 
 ## Tests
 

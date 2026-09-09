@@ -134,6 +134,7 @@ class MqttLineSource:
                 "server_time": datetime.now(timezone.utc).isoformat(),
                 "last_update": self._timestamp,
                 "values": build_view(self._raw) if self._raw is not None else None,
+                "raw": dict(self._raw) if self._raw is not None else None,
                 "broker": self.broker,
                 "source": "mqtt",
             }

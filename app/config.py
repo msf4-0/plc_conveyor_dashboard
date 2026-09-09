@@ -33,6 +33,9 @@ class Config:
     data_source: str = "direct"
     broker_host: str = "127.0.0.1"
     broker_port: int = 1883
+    # Optional: used only by the MCP server's get_latest_oee tool. The
+    # dashboard itself never requires a database (fail-fast is unchanged).
+    oee_database_url: str | None = None
 
 
 def _require(name: str) -> str:
@@ -63,6 +66,7 @@ def load_config() -> Config:
         data_source=data_source,
         broker_host=os.environ.get("BROKER_HOST", "127.0.0.1"),
         broker_port=int(os.environ.get("BROKER_PORT", "1883")),
+        oee_database_url=os.environ.get("OEE_DATABASE_URL") or None,
     )
 
 

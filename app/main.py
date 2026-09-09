@@ -14,6 +14,7 @@ from app.db import (
     oee_history,
     test_oee_connection,
 )
+from app.mcp_server import create_mcp_server
 from app.source_manager import SOURCES, SourceManager
 from app.stats import MinuteCounter
 
@@ -46,11 +47,24 @@ async def lifespan(app: FastAPI):
         poller.connection,
         config.poll_interval_ms,
     )
-    yield
+    # Mounted sub-app lifespans don't run in Starlette: run the MCP streamable
+    # HTTP session manager for the serving period ourselves.
+    async with mcp_server.session_manager.run():
+        yield
     poller.stop()
 
 
 app = FastAPI(title="PLC Conveyor Dashboard", lifespan=lifespan)
+
+# MCP server (read-only tools for chatbots / n8n MCP Client Tool): Streamable
+# HTTP transport at /mcp, same process and port as the dashboard.
+# get_iq_data reads the live source manager; get_latest_oee reads
+# OEE_DATABASE_URL directly (independent of the UI-connected OEE database).
+# Building the ASGI app initializes the session manager used in lifespan.
+mcp_server = create_mcp_server(
+    snapshot_fn=poller.snapshot, oee_database_url=config.oee_database_url
+)
+mcp_asgi = mcp_server.streamable_http_app()
 
 
 @app.get("/api/state")
@@ -190,3 +204,7 @@ def index():
 
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+# MCP last: mounted at "/" so the sub-app's single route serves exactly /mcp
+# without shadowing the dashboard or /api/* routes registered above.
+app.mount("/", mcp_asgi)
