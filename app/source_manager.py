@@ -62,7 +62,6 @@ def build_source(
         return MqttLineSource(
             broker_host=host,
             broker_port=port,
-            poll_interval_ms=config.poll_interval_ms,
             on_event=on_event,
         )
     return PlcPoller(
@@ -166,14 +165,6 @@ class SourceManager:
     @property
     def source(self) -> str:
         return self._source_name
-
-    @property
-    def line_ip(self) -> str | None:
-        return getattr(self._source, "line_ip", None)
-
-    @property
-    def broker(self) -> str | None:
-        return getattr(self._source, "broker", None)
 
     @property
     def connection(self) -> str | None:

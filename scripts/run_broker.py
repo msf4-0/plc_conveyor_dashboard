@@ -11,18 +11,19 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.broker import start_broker, stop_broker
+from app.broker import create_broker
 from app.config import load_config
 
 
 async def main() -> None:
     port = load_config().broker_port
-    broker = await start_broker(port)
+    broker = create_broker(port)
+    await broker.start()
     print(f"MQTT broker listening on 0.0.0.0:{port} — press Ctrl+C to stop")
     try:
         await asyncio.Event().wait()  # run until interrupted
     finally:
-        await stop_broker(broker)
+        await broker.shutdown()
 
 
 if __name__ == "__main__":

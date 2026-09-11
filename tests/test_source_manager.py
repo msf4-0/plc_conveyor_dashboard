@@ -83,7 +83,6 @@ def test_delegation_and_properties():
     mgr.stop()
     assert mgr.snapshot()["source"] == "direct"
     assert mgr.source == "direct"
-    assert mgr.line_ip == "192.168.5.3"
     assert mgr.connection == "192.168.5.3"
 
 
@@ -125,7 +124,7 @@ def test_startup_mqtt_without_broker_stays_inactive():
     snap = mgr.snapshot()
     assert mgr.source == "mqtt"
     assert snap["connecting"] is True and snap["broker"] is None
-    assert mgr.broker is None and mgr.connection is None
+    assert mgr.connection is None
 
 
 def test_switch_swaps_sources_and_stops_old():
@@ -275,7 +274,7 @@ def test_no_phantom_counts_across_source_switch(mqtt_broker):
     def factory(cfg, name, broker=None, on_event=None):
         if name == "direct":
             return PlcPoller(direct_reader, 50, line_ip=direct_ip, on_event=on_event)
-        return MqttLineSource(broker[0], broker[1], 50, staleness_ms=1000,
+        return MqttLineSource(broker[0], broker[1], staleness_ms=1000,
                               on_event=on_event)
 
     manager = SourceManager(config, initial_source="direct", on_event=recorded.append,
@@ -317,7 +316,7 @@ def test_direct_to_mqtt_and_back_end_to_end(mqtt_broker):
     def factory(cfg, name, broker=None, on_event=None):
         if name == "direct":
             return PlcPoller(FakePlc(fail=True), 50, line_ip=direct_ip, on_event=on_event)  # unreachable PLC
-        return MqttLineSource(broker[0], broker[1], 50, staleness_ms=1000,
+        return MqttLineSource(broker[0], broker[1], staleness_ms=1000,
                               on_event=on_event)
 
     recorded: list[str] = []

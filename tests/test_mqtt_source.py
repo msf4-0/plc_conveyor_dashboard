@@ -2,6 +2,7 @@ import json
 import time
 
 import pytest
+from paho.mqtt.reasoncodes import ReasonCode
 
 from app.mqtt_proto import TAGS_TOPIC, encode_payload
 from app.mqtt_source import DEFAULT_STALENESS_MS, MqttLineSource
@@ -42,7 +43,8 @@ class FakePahoClient:
 
     # test helpers
     def fire_connect(self, ok=True):
-        self.on_connect(self, None, {}, 0 if ok else 5, None)
+        # CONNACK reason code; "Not authorized" is a v5 failure code (0x87)
+        self.on_connect(self, None, {}, ReasonCode(2, "Success" if ok else "Not authorized"), None)
 
     def fire_tags(self, values: dict):
         self.on_message(self, None, type("M", (), {
@@ -61,7 +63,6 @@ def make_source(client, staleness_ms=DEFAULT_STALENESS_MS, on_event=None):
     return MqttLineSource(
         broker_host="192.168.0.11",
         broker_port=1883,
-        poll_interval_ms=500,
         staleness_ms=staleness_ms,
         on_event=on_event,
         client_factory=lambda: client,

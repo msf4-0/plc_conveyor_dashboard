@@ -1,12 +1,8 @@
-import asyncio
-import socket
-import threading
 import time
 
 import paho.mqtt.client as mqtt
 import pytest
 
-from app.broker import start_broker, stop_broker
 from app.mqtt_proto import TAGS_TOPIC, parse_payload
 from app.publisher import LinePublisher
 from app.tags import raw_values
@@ -33,48 +29,6 @@ class FakeReader:
 
     def close(self):
         pass
-
-
-def _free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
-@pytest.fixture()
-def broker_port():
-    port = _free_port()
-    _STOP.clear()
-    thread = threading.Thread(
-        target=lambda: asyncio.run(_run_broker(port)), daemon=True
-    )
-    thread.start()
-    deadline = time.time() + 10
-    while time.time() < deadline:  # wait until the broker accepts connections
-        try:
-            with socket.create_connection(("127.0.0.1", port), timeout=0.5):
-                break
-        except OSError:
-            if not thread.is_alive():
-                raise RuntimeError("broker thread died at startup")
-            time.sleep(0.1)
-    else:
-        raise RuntimeError("broker did not start within 10s")
-    yield port
-    _STOP.set()
-    thread.join(timeout=10)
-
-
-_STOP = threading.Event()
-
-
-async def _run_broker(port: int):
-    broker = await start_broker(port)
-    try:
-        while not _STOP.is_set():
-            await asyncio.sleep(0.2)
-    finally:
-        await stop_broker(broker)
 
 
 class Collector:
@@ -106,17 +60,17 @@ class Collector:
 
 
 @pytest.fixture()
-def publisher(broker_port):
+def publisher(mqtt_broker):
     reader = FakeReader()
-    pub = LinePublisher(reader, "127.0.0.1", broker_port, poll_interval_ms=50)
+    pub = LinePublisher(reader, "127.0.0.1", mqtt_broker.port, poll_interval_ms=50)
     yield reader, pub
     if pub._thread is not None:
         pub.stop()
 
 
-def test_publisher_cadence_payload_and_no_retain(publisher, broker_port):
+def test_publisher_cadence_payload_and_no_retain(publisher, mqtt_broker):
     reader, pub = publisher
-    collector = Collector(broker_port)
+    collector = Collector(mqtt_broker.port)
     try:
         pub.start()
         assert collector.wait_for(
@@ -140,16 +94,16 @@ def test_publisher_cadence_payload_and_no_retain(publisher, broker_port):
         collector.stop()
 
 
-def test_publisher_clean_stop_publishes_nothing_extra(publisher, broker_port):
+def test_publisher_clean_stop_publishes_nothing_extra(publisher, mqtt_broker):
     reader, pub = publisher
-    collector = Collector(broker_port)
+    collector = Collector(mqtt_broker.port)
     try:
         pub.start()
         assert collector.wait_for(lambda ms: any(m[0] == TAGS_TOPIC for m in ms))
     finally:
         collector.stop()
     pub.stop()
-    collector = Collector(broker_port)
+    collector = Collector(mqtt_broker.port)
     try:
         # no retained snapshot, no status message: a new subscriber gets nothing
         time.sleep(0.5)

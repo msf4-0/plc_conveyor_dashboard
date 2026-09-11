@@ -14,7 +14,7 @@ from app.db import (
     oee_history,
     test_oee_connection,
 )
-from app.mcp_server import create_mcp_server
+from app.mcp_server import OEE_EMPTY, create_mcp_server
 from app.source_manager import SOURCES, SourceManager
 from app.stats import MinuteCounter
 
@@ -152,13 +152,7 @@ def connect_oee(conn: OeeConnection):
 @app.get("/api/oee")
 def get_oee():
     """Latest OEE row from the connected database (or an error payload)."""
-    empty = {
-        "timestamp": None,
-        "availability": None,
-        "performance": None,
-        "quality": None,
-        "oee": None,
-    }
+    empty = OEE_EMPTY
     dsn = _oee_conn["dsn"]
     if dsn is None:
         return {"connected": False, "error": "not connected to an OEE database", **empty}

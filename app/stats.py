@@ -1,5 +1,4 @@
 import threading
-from collections import deque
 from datetime import datetime
 from typing import Callable
 
@@ -32,7 +31,6 @@ class MinuteCounter:
         self._clock = clock
         self._lock = threading.Lock()
         self._buckets: dict[int, dict[str, int]] = {}
-        self._order: deque[int] = deque()
 
     def record(self, event_type: str) -> None:
         """Count one event into the current minute's bucket."""
@@ -44,7 +42,6 @@ class MinuteCounter:
             if bucket is None:
                 bucket = dict.fromkeys(EVENT_TYPES, 0)
                 self._buckets[key] = bucket
-                self._order.append(key)
                 self._evict_locked(key)
             bucket[event_type] += 1
 
@@ -63,11 +60,9 @@ class MinuteCounter:
         """Clear all buckets (count window restarts from empty)."""
         with self._lock:
             self._buckets.clear()
-            self._order.clear()
 
     def _evict_locked(self, now_key: int) -> None:
-        while self._order and (now_key - self._order[0]) >= self._window:
-            stale = self._order.popleft()
+        for stale in [k for k in self._buckets if now_key - k >= self._window]:
             self._buckets.pop(stale, None)
 
     def _point_locked(self, key: int) -> dict:

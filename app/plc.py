@@ -90,7 +90,6 @@ class PlcPoller:
                 "raw": dict(self._raw) if self._raw is not None else None,
                 "line_ip": self._line_ip,
                 "source": "direct",
-                "lines": {},
             }
 
     @property

@@ -47,10 +47,6 @@ class OeeRecorder:
         self._connected = False
         self._last_write = float("-inf")
 
-    @property
-    def connected(self) -> bool:
-        return self._connected
-
     def poll_once(self) -> bool:
         """One PLC read + engine feed; returns True when connected."""
         try:

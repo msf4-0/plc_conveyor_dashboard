@@ -49,7 +49,6 @@ def test_mqtt_round_trip_and_silence_liveness(mqtt_broker):
     source = MqttLineSource(
         broker_host="127.0.0.1",
         broker_port=mqtt_broker.port,
-        poll_interval_ms=50,
         staleness_ms=1000,
         on_event=recorded.append,
     )

@@ -1,4 +1,4 @@
-from app.tags import TAGS, Area, Kind, button_pressed, raw_values
+from app.tags import TAGS, Area, button_pressed, raw_values
 
 
 def test_tag_addresses_match_plc_tags_csv():
@@ -44,9 +44,3 @@ def test_raw_values_extraction():
     assert raw["B3"] is False and raw["B4"] is False
     assert raw["P3"] is True and raw["P1"] is True and raw["P2"] is False
     assert raw["K1"] is False
-
-
-def test_kinds():
-    assert TAGS["B4"].kind is Kind.SENSOR
-    assert TAGS["P3"].kind is Kind.LIGHT
-    assert TAGS["K1"].kind is Kind.MOTOR

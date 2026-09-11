@@ -5,7 +5,7 @@ import time
 
 import pytest
 
-from app.broker import start_broker, stop_broker
+from app.broker import create_broker
 
 
 def _free_port() -> int:
@@ -24,12 +24,13 @@ class BrokerRunner:
 
     def _run(self):
         async def go():
-            broker = await start_broker(self.port)
+            broker = create_broker(self.port)
+            await broker.start()
             try:
                 while not self._stop.is_set():
                     await asyncio.sleep(0.2)
             finally:
-                await stop_broker(broker)
+                await broker.shutdown()
 
         asyncio.run(go())
 

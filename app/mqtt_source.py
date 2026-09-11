@@ -33,7 +33,6 @@ class MqttLineSource:
         self,
         broker_host: str,
         broker_port: int,
-        poll_interval_ms: int,
         staleness_ms: int = DEFAULT_STALENESS_MS,
         on_event: Callable[[str], None] | None = None,
         client_factory=make_paho_client,
@@ -69,11 +68,7 @@ class MqttLineSource:
     # -- paho callbacks ------------------------------------------------------
 
     def _on_connect(self, client, userdata, flags, reason_code, properties=None):
-        is_failure = getattr(reason_code, "is_failure", None)
-        failed = is_failure() if callable(is_failure) else (
-            is_failure if isinstance(is_failure, bool) else reason_code != 0
-        )
-        if failed:
+        if reason_code.is_failure:
             log.warning("Broker connection refused: %s", reason_code)
             return
         log.info("Connected to broker %s:%s", *self._broker)
@@ -90,10 +85,8 @@ class MqttLineSource:
                 return  # message on an unexpected topic: ignore
             raw = parse_payload(msg.payload)
             with self._lock:
-                stale_before = self._is_stale_locked()
-                if self._baseline or stale_before:
-                    self._baseline = True  # gap: re-baseline, never count across it
-                events = [] if self._baseline else detect_events(self._previous_raw, raw)
+                gap = self._baseline or self._is_stale_locked()
+                events = [] if gap else detect_events(self._previous_raw, raw)
                 self._baseline = False
                 self._previous_raw = raw
                 self._raw = raw

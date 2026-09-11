@@ -74,15 +74,11 @@ def load_recorder_config() -> RecorderConfig:
     """Fail-fast config for the standalone OEE recorder.
 
     Requires only the recorder's own variables plus the shared PLC
-    connection; never the dashboard's HOST/PORT.
+    connection; never the dashboard's HOST/PORT. Ideal cycle time is
+    range-checked by OeeEngine at construction.
     """
     ideal_raw = os.environ.get("IDEAL_CYCLE_TIME_S")
     ideal = float(ideal_raw) if ideal_raw else IDEAL_CYCLE_TIME_DEFAULT_S
-    if not (IDEAL_CYCLE_TIME_MIN_S <= ideal <= IDEAL_CYCLE_TIME_MAX_S):
-        raise ValueError(
-            f"IDEAL_CYCLE_TIME_S must be between "
-            f"{IDEAL_CYCLE_TIME_MIN_S} and {IDEAL_CYCLE_TIME_MAX_S} seconds"
-        )
     interval_raw = os.environ.get("OEE_WRITE_INTERVAL_S")
     interval = float(interval_raw) if interval_raw else WRITE_INTERVAL_DEFAULT_S
     if interval <= 0:
