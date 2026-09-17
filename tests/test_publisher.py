@@ -6,6 +6,7 @@ import pytest
 from app.mqtt_proto import TAGS_TOPIC, parse_payload
 from app.publisher import LinePublisher
 from app.tags import raw_values
+from tests.conftest import TEST_MQTT_PASSWORD, TEST_MQTT_USERNAME
 
 
 class FakeReader:
@@ -36,6 +37,7 @@ class Collector:
         self.messages: list[tuple[str, bytes, bool]] = []
         self.client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
         self.client.on_message = self._on_message
+        self.client.username_pw_set(TEST_MQTT_USERNAME, TEST_MQTT_PASSWORD)
         self.client.connect("127.0.0.1", port)
         self.client.loop_start()
         self.client.subscribe([(TAGS_TOPIC, 0)])
@@ -62,7 +64,8 @@ class Collector:
 @pytest.fixture()
 def publisher(mqtt_broker):
     reader = FakeReader()
-    pub = LinePublisher(reader, "127.0.0.1", mqtt_broker.port, poll_interval_ms=50)
+    pub = LinePublisher(reader, "127.0.0.1", mqtt_broker.port, poll_interval_ms=50,
+                        mqtt_username=TEST_MQTT_USERNAME, mqtt_password=TEST_MQTT_PASSWORD)
     yield reader, pub
     if pub._thread is not None:
         pub.stop()

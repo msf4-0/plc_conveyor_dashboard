@@ -7,6 +7,10 @@ import pytest
 
 from app.broker import create_broker
 
+# shared test credential for the authenticated broker fixture
+TEST_MQTT_USERNAME = "testuser"
+TEST_MQTT_PASSWORD = "testpass"
+
 
 def _free_port() -> int:
     with socket.socket() as s:
@@ -24,7 +28,7 @@ class BrokerRunner:
 
     def _run(self):
         async def go():
-            broker = create_broker(self.port)
+            broker = create_broker(self.port, TEST_MQTT_USERNAME, TEST_MQTT_PASSWORD)
             await broker.start()
             try:
                 while not self._stop.is_set():

@@ -1,13 +1,15 @@
+import hmac
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+import app.auth as auth
 from app.config import load_config
 from app.db import (
     latest_oee_row,
@@ -55,6 +57,53 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="PLC Conveyor Dashboard", lifespan=lifespan)
+
+
+# -- auth: shared-password session gate over /api/*, bearer token over /mcp --
+# The page itself and /static carry no line data and stay public; every
+# data-bearing route requires a valid session cookie (or, for /mcp, a bearer
+# token for non-browser MCP clients such as n8n's MCP Client Tool).
+
+class LoginRequest(BaseModel):
+    password: str
+
+
+@app.post("/api/login")
+def login(body: LoginRequest, response: Response):
+    if not auth.password_matches(body.password, config.dashboard_password):
+        raise HTTPException(status_code=401, detail="incorrect password")
+    response.set_cookie(
+        auth.COOKIE_NAME,
+        auth.sign_session(config.dashboard_password),
+        max_age=auth.SESSION_MAX_AGE_S,
+        httponly=True,
+        samesite="lax",
+        path="/",
+    )
+    return {"logged_in": True}
+
+
+@app.post("/api/logout")
+def logout(response: Response):
+    response.delete_cookie(auth.COOKIE_NAME, path="/")
+    return {"logged_in": False}
+
+
+@app.middleware("http")
+async def auth_gate(request: Request, call_next):
+    path = request.url.path
+    if path == "/mcp" or path.startswith("/mcp/"):
+        expected = f"Bearer {config.mcp_token}"
+        if not hmac.compare_digest(
+            request.headers.get("authorization", "").encode(), expected.encode()
+        ):
+            return JSONResponse({"detail": "unauthorized"}, status_code=401)
+    elif path.startswith("/api"):
+        if path not in ("/api/login", "/api/logout"):
+            cookie = request.cookies.get(auth.COOKIE_NAME, "")
+            if not auth.verify_session(cookie, config.dashboard_password):
+                return JSONResponse({"detail": "not logged in"}, status_code=401)
+    return await call_next(request)
 
 # MCP server (read-only tools for chatbots / n8n MCP Client Tool): Streamable
 # HTTP transport at /mcp, same process and port as the dashboard.

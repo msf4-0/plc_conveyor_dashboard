@@ -35,12 +35,16 @@ class LinePublisher:
         broker_host: str,
         broker_port: int,
         poll_interval_ms: int,
+        mqtt_username: str | None = None,
+        mqtt_password: str | None = None,
     ):
         self._reader = reader
         self._poll_interval = poll_interval_ms / 1000.0
         self._stop = threading.Event()
         self._thread = None
         self._mqtt = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+        if mqtt_username is not None:
+            self._mqtt.username_pw_set(mqtt_username, mqtt_password or "")
         self._mqtt.on_connect = self._on_connect
         self._broker = (broker_host, broker_port)
 
@@ -92,6 +96,8 @@ def main() -> None:
         broker_host=cfg.broker_host,
         broker_port=cfg.broker_port,
         poll_interval_ms=cfg.poll_interval_ms,
+        mqtt_username=cfg.mqtt_username,
+        mqtt_password=cfg.mqtt_password,
     )
     publisher.start()
     log.info(

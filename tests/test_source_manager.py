@@ -4,6 +4,7 @@ import pytest
 
 from app.config import Config
 from app.source_manager import SourceManager
+from tests.conftest import TEST_MQTT_PASSWORD, TEST_MQTT_USERNAME
 
 
 class FakeSource:
@@ -42,6 +43,8 @@ def make_config(**overrides):
     kwargs = dict(
         plc_ip="192.168.5.3", plc_rack=0, plc_slot=1, poll_interval_ms=500,
         host="h", port=1, data_source="direct",
+        dashboard_password="pw", mcp_token="tok",
+        mqtt_username=TEST_MQTT_USERNAME, mqtt_password=TEST_MQTT_PASSWORD,
     )
     kwargs.update(overrides)
     return Config(**kwargs)
@@ -267,7 +270,9 @@ def test_no_phantom_counts_across_source_switch(mqtt_broker):
     set_bit(direct_reader.outputs, 0, 6)  # P3 ON from the very start
     mqtt_reader = FakePlc()
     set_bit(mqtt_reader.outputs, 0, 6)  # P3 ON from the very start
-    publisher = LinePublisher(mqtt_reader, "127.0.0.1", mqtt_broker.port, 50)
+    publisher = LinePublisher(mqtt_reader, "127.0.0.1", mqtt_broker.port, 50,
+                              mqtt_username=TEST_MQTT_USERNAME,
+                              mqtt_password=TEST_MQTT_PASSWORD)
 
     recorded: list[str] = []
 
@@ -275,7 +280,9 @@ def test_no_phantom_counts_across_source_switch(mqtt_broker):
         if name == "direct":
             return PlcPoller(direct_reader, 50, line_ip=direct_ip, on_event=on_event)
         return MqttLineSource(broker[0], broker[1], staleness_ms=1000,
-                              on_event=on_event)
+                              on_event=on_event,
+                              mqtt_username=TEST_MQTT_USERNAME,
+                              mqtt_password=TEST_MQTT_PASSWORD)
 
     manager = SourceManager(config, initial_source="direct", on_event=recorded.append,
                             factory=factory)
@@ -311,13 +318,17 @@ def test_direct_to_mqtt_and_back_end_to_end(mqtt_broker):
     config = make_config(plc_ip=direct_ip)
 
     mqtt_reader = FakePlc()
-    publisher = LinePublisher(mqtt_reader, "127.0.0.1", mqtt_broker.port, 50)
+    publisher = LinePublisher(mqtt_reader, "127.0.0.1", mqtt_broker.port, 50,
+                              mqtt_username=TEST_MQTT_USERNAME,
+                              mqtt_password=TEST_MQTT_PASSWORD)
 
     def factory(cfg, name, broker=None, on_event=None):
         if name == "direct":
             return PlcPoller(FakePlc(fail=True), 50, line_ip=direct_ip, on_event=on_event)  # unreachable PLC
         return MqttLineSource(broker[0], broker[1], staleness_ms=1000,
-                              on_event=on_event)
+                              on_event=on_event,
+                              mqtt_username=TEST_MQTT_USERNAME,
+                              mqtt_password=TEST_MQTT_PASSWORD)
 
     recorded: list[str] = []
     manager = SourceManager(config, initial_source="direct", on_event=recorded.append,

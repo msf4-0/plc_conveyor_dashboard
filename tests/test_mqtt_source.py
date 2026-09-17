@@ -25,9 +25,15 @@ class FakePahoClient:
         self.on_connect = None
         self.on_message = None
         self.on_disconnect = None
+        self.credentials: tuple[str, str] | None = None
+        self.events: list[str] = []  # call order of public client methods
+
+    def username_pw_set(self, username, password=None):
+        self.credentials = (username, password)
+        self.events.append("username_pw_set")
 
     def connect_async(self, host, port, keepalive=30):
-        pass
+        self.events.append("connect_async")
 
     def loop_start(self):
         pass
@@ -83,6 +89,19 @@ def test_connect_subscribes_only_to_plc_tags(source):
     client, src, _ = source
     assert client.subscriptions == [[(TAGS_TOPIC, 0)]]
     assert src.broker == "192.168.0.11:1883"
+
+
+def test_shared_credentials_set_before_connect():
+    client = FakePahoClient()
+    MqttLineSource(
+        broker_host="192.168.0.11",
+        broker_port=1883,
+        client_factory=lambda: client,
+        mqtt_username="dashboard",
+        mqtt_password="secret",
+    ).start()
+    assert client.credentials == ("dashboard", "secret")
+    assert client.events.index("username_pw_set") < client.events.index("connect_async")
 
 
 def test_first_snapshot_is_baseline_and_shows_values(source):

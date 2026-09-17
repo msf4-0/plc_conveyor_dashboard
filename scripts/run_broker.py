@@ -1,4 +1,5 @@
-"""Run the line-PC MQTT broker (no auth) on BROKER_PORT (default 1883).
+"""Run the line-PC MQTT broker (shared-credential auth, plc_tags only) on
+BROKER_PORT (default 1883).
 
 Usage: .\\.venv\\Scripts\\python.exe scripts\\run_broker.py
 Stop with Ctrl+C; the broker shuts down cleanly.
@@ -16,10 +17,10 @@ from app.config import load_config
 
 
 async def main() -> None:
-    port = load_config().broker_port
-    broker = create_broker(port)
+    cfg = load_config()
+    broker = create_broker(cfg.broker_port, cfg.mqtt_username, cfg.mqtt_password)
     await broker.start()
-    print(f"MQTT broker listening on 0.0.0.0:{port} — press Ctrl+C to stop")
+    print(f"MQTT broker listening on 0.0.0.0:{cfg.broker_port} — press Ctrl+C to stop")
     try:
         await asyncio.Event().wait()  # run until interrupted
     finally:

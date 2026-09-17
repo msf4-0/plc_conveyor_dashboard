@@ -36,6 +36,8 @@ class MqttLineSource:
         staleness_ms: int = DEFAULT_STALENESS_MS,
         on_event: Callable[[str], None] | None = None,
         client_factory=make_paho_client,
+        mqtt_username: str | None = None,
+        mqtt_password: str | None = None,
     ):
         self._broker = (broker_host, broker_port)
         self._on_event = on_event
@@ -48,6 +50,8 @@ class MqttLineSource:
         self._last_recv: float | None = None
         self._timestamp: str | None = None
         self._client = client_factory()
+        if mqtt_username is not None:
+            self._client.username_pw_set(mqtt_username, mqtt_password or "")
         self._client.on_connect = self._on_connect
         self._client.on_message = self._on_message
         self._client.on_disconnect = self._on_disconnect

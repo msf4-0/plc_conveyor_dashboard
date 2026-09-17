@@ -6,6 +6,10 @@ from fastapi.testclient import TestClient
 import app.main as main
 
 CLIENT = TestClient(main.app)
+# /api/* is session-gated: log this shared client in once at import.
+assert CLIENT.post(
+    "/api/login", json={"password": main.config.dashboard_password}
+).status_code == 200
 
 EMPTY_ROW = {
     "timestamp": None,

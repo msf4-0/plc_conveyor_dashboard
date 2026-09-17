@@ -8,6 +8,7 @@ import time
 
 from app.mqtt_source import MqttLineSource
 from app.publisher import LinePublisher
+from tests.conftest import TEST_MQTT_PASSWORD, TEST_MQTT_USERNAME
 
 
 class FakeReader:
@@ -44,13 +45,16 @@ def wait_for(predicate, timeout=10.0):
 
 def test_mqtt_round_trip_and_silence_liveness(mqtt_broker):
     reader = FakeReader()
-    publisher = LinePublisher(reader, "127.0.0.1", mqtt_broker.port, poll_interval_ms=50)
+    publisher = LinePublisher(reader, "127.0.0.1", mqtt_broker.port, poll_interval_ms=50,
+                              mqtt_username=TEST_MQTT_USERNAME, mqtt_password=TEST_MQTT_PASSWORD)
     recorded: list[str] = []
     source = MqttLineSource(
         broker_host="127.0.0.1",
         broker_port=mqtt_broker.port,
         staleness_ms=1000,
         on_event=recorded.append,
+        mqtt_username=TEST_MQTT_USERNAME,
+        mqtt_password=TEST_MQTT_PASSWORD,
     )
     try:
         publisher.start()

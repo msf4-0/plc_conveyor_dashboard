@@ -141,6 +141,35 @@
   #oee-chart-box { position: relative; height: 200px; margin-top: 12px; }
   footer { color: var(--muted); font-size: .85rem; margin: 24px 0 8px; line-height: 1.5; }
   #last-update { color: var(--muted); font-size: .8rem; }
+  #logout-btn {
+    background: #243244; color: var(--text); border: 1px solid var(--panel-edge);
+    border-radius: 6px; padding: 6px 14px; cursor: pointer; font-weight: 700;
+    font-size: .8rem; margin-left: auto;
+  }
+  #logout-btn:hover { background: #2d3f56; }
+  /* Login overlay (shown when a gated API call returns 401) */
+  #login-overlay {
+    display: none; position: fixed; inset: 0; background: rgba(6, 10, 15, .92);
+    z-index: 100; align-items: center; justify-content: center;
+  }
+  #login-overlay.visible { display: flex; }
+  .login-card {
+    background: var(--panel); border: 1px solid var(--panel-edge);
+    border-radius: 10px; padding: 24px; width: 300px; text-align: center;
+  }
+  .login-card h2 { color: var(--text); text-transform: none; letter-spacing: 0; }
+  #login-error { color: var(--red); font-size: .85rem; min-height: 1.2em; display: block; }
+  #login-password {
+    background: #1d2530; color: var(--text); border: 1px solid var(--panel-edge);
+    border-radius: 6px; padding: 8px 10px; width: 100%; font-size: 1rem;
+    margin: 8px 0 12px;
+  }
+  #login-submit {
+    background: #243244; color: var(--text); border: 1px solid var(--panel-edge);
+    border-radius: 6px; padding: 8px 16px; cursor: pointer; font-weight: 700;
+    width: 100%;
+  }
+  #login-submit:hover { background: #2d3f56; }
 </style>
 </head>
 <body>
@@ -159,6 +188,7 @@
       <span id="mqtt-status"></span>
     </span>
     <span id="last-update"></span>
+    <button id="logout-btn" type="button" title="End the dashboard session">Log out</button>
   </div>
   <h1>Conveyor Line Dashboard</h1>
 
@@ -243,6 +273,17 @@
   </footer>
 </main>
 
+<div id="login-overlay">
+  <div class="login-card">
+    <h2>Dashboard Login</h2>
+    <form id="login-form">
+      <span id="login-error"></span>
+      <input id="login-password" type="password" placeholder="Password" autocomplete="current-password">
+      <button id="login-submit" type="submit">Log in</button>
+    </form>
+  </div>
+</div>
+
 <script>
 const STATE_URL = "/api/state";
 const STATS_URL = "/api/stats";
@@ -252,6 +293,60 @@ const OEE_HISTORY_URL = "/api/oee/history";
 const OEE_CONNECT_URL = "/api/oee/connection";
 const OEE_CONN_STORAGE_KEY = "oee-db-connection";
 const MQTT_BROKER_STORAGE_KEY = "mqtt-broker";
+const LOGIN_URL = "/api/login";
+const LOGOUT_URL = "/api/logout";
+
+// ---- session gate: show the login overlay whenever a gated call gets 401 ----
+
+function showLogin(message) {
+  document.getElementById("login-overlay").classList.add("visible");
+  document.getElementById("login-error").textContent = message || "";
+  document.getElementById("login-password").focus();
+}
+
+function hideLogin() {
+  document.getElementById("login-overlay").classList.remove("visible");
+}
+
+async function loginSubmit() {
+  const password = document.getElementById("login-password").value;
+  try {
+    const res = await fetch(LOGIN_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: password }),
+    });
+    if (res.ok) {
+      hideLogin();
+      document.getElementById("login-password").value = "";
+      pollState();
+      pollStats();
+      pollOee();
+      pollOeeHistory();
+      // redo the page-load auto-reconnects that were refused while logged out
+      const storedConn = loadConnFromStorage();
+      if (storedConn) connectOeeDatabase(storedConn);
+      const storedBroker = loadMqttBroker();
+      if (storedBroker) connectMqttBroker();
+      return;
+    }
+    showLogin(res.status === 401 ? "incorrect password" : "login failed");
+  } catch (err) {
+    showLogin("login failed");
+  }
+}
+
+document.getElementById("login-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  loginSubmit();
+});
+
+document.getElementById("logout-btn").addEventListener("click", async () => {
+  try {
+    await fetch(LOGOUT_URL, { method: "POST" });
+  } catch (err) { /* clear the view regardless */ }
+  showLogin();
+});
 
 function setLed(id, on) {
   document.getElementById(id).classList.toggle("on", on);
@@ -311,6 +406,8 @@ async function connectMqttBroker() {
     if (res.ok) {
       setMqttStatus("subscribed to " + broker, "");
       saveMqttBroker(broker);
+    } else if (res.status === 401) {
+      showLogin();
     } else {
       setMqttStatus(body.detail || "connection failed", "err");
     }
@@ -399,6 +496,10 @@ function renderState(state) {
 async function pollState() {
   try {
     const res = await fetch(STATE_URL, { cache: "no-store" });
+    if (res.status === 401) {
+      showLogin();
+      return;
+    }
     if (!res.ok) throw new Error("state fetch " + res.status);
     renderState(await res.json());
   } catch (err) {
@@ -586,6 +687,10 @@ async function connectOeeDatabase(conn) {
       pollOee();
       pollOeeHistory();
       return true;
+    }
+    if (res.status === 401) {
+      showLogin();
+      return false;
     }
     setConnStatus(body.detail || "connection failed", "err");
     return false;

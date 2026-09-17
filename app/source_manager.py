@@ -63,6 +63,8 @@ def build_source(
             broker_host=host,
             broker_port=port,
             on_event=on_event,
+            mqtt_username=config.mqtt_username,
+            mqtt_password=config.mqtt_password,
         )
     return PlcPoller(
         reader=Snap7Reader(config.plc_ip, config.plc_rack, config.plc_slot),

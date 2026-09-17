@@ -10,6 +10,10 @@ BASE_ENV = {
     "POLL_INTERVAL_MS": "500",
     "HOST": "127.0.0.1",
     "PORT": "8000",
+    "DASHBOARD_PASSWORD": "secret-dash",
+    "MCP_TOKEN": "secret-mcp",
+    "MQTT_USERNAME": "line1",
+    "MQTT_PASSWORD": "secret-mqtt",
 }
 
 RECORDER_ENV = {
@@ -77,6 +81,16 @@ def test_missing_required_var_fails_fast(env, monkeypatch):
     monkeypatch.delenv("PLC_IP")
     with pytest.raises(RuntimeError):
         load_config()
+
+
+@pytest.mark.parametrize(
+    "var", ["DASHBOARD_PASSWORD", "MCP_TOKEN", "MQTT_USERNAME", "MQTT_PASSWORD"]
+)
+def test_missing_auth_var_fails_fast(env, monkeypatch, var):
+    monkeypatch.delenv(var)
+    with pytest.raises(RuntimeError) as exc:
+        load_config()
+    assert var in str(exc.value)
 
 
 # -- recorder configuration -------------------------------------------------

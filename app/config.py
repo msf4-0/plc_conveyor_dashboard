@@ -30,6 +30,10 @@ class Config:
     poll_interval_ms: int
     host: str
     port: int
+    dashboard_password: str
+    mcp_token: str
+    mqtt_username: str
+    mqtt_password: str
     data_source: str = "direct"
     broker_host: str = "127.0.0.1"
     broker_port: int = 1883
@@ -63,6 +67,10 @@ def load_config() -> Config:
         poll_interval_ms=int(_require("POLL_INTERVAL_MS")),
         host=_require("HOST"),
         port=int(_require("PORT")),
+        dashboard_password=_require("DASHBOARD_PASSWORD"),
+        mcp_token=_require("MCP_TOKEN"),
+        mqtt_username=_require("MQTT_USERNAME"),
+        mqtt_password=_require("MQTT_PASSWORD"),
         data_source=data_source,
         broker_host=os.environ.get("BROKER_HOST", "127.0.0.1"),
         broker_port=int(os.environ.get("BROKER_PORT", "1883")),

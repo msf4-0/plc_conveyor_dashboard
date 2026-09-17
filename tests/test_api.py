@@ -19,6 +19,10 @@ class StubPoller:
 
 
 CLIENT = TestClient(main.app)  # lifespan (real poller) not started in tests
+# /api/* is session-gated: log this shared client in once at import.
+assert CLIENT.post(
+    "/api/login", json={"password": main.config.dashboard_password}
+).status_code == 200
 
 
 def test_api_state_shape_and_polarity():
